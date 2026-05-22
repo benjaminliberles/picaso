@@ -1850,12 +1850,8 @@ def update_rfacv(bundle, Atmosphere, OpacityWEd, OpacityNoEd=None,
                             do_holes=False)
         
         FNETV = flux_net_v[0, 0, 0]
-        if FNETV == np.nan:
-            print('NAN INSIDE FLUX CALC')
     else: # FNETV has to be processed differently depending on if is coming straight from get_fluxes or t_start
         FNETV = flux_net_v[0]
-        if FNETV == np.nan:
-            print('NAN OUTSIDE FLUX CALC')
                             
     """
     Update the rfacv value based on the analytic prescription for tidally locked rocky planets.
@@ -1877,8 +1873,10 @@ def update_rfacv(bundle, Atmosphere, OpacityWEd, OpacityNoEd=None,
 
     # 3) calculate the surface pressure p_surf by taking the deepest pressure level
     p_surf = pressure[-1]
+
     # finally, compute new rfacv value using Koll2022 ApJ 924 134
-    rfacv = get_rfacv_rockytl(p_surf, TauLW, Teq) 
+    rfacv = get_rfacv_rockytl(p_surf, TauLW, Teq)
+    
     return rfacv
 
 @jit(nopython=True)

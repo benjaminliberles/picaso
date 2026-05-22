@@ -1936,8 +1936,6 @@ class inputs():
             bin_flux_star = opannection.unshifted_stellar_spec
             unit_flux =  'ergs cm^{-2} s^{-1} cm^{-1}'
         elif ('climate' in self.inputs['calculation'] or (get_lvl_flux)):
-            print('here2')
-            print('wno_planet: max=', np.max(wno_planet), '; min=', np.min(wno_planet))
             if not ((not np.isnan(semi_major)) & (not np.isnan(r))): 
                 raise Exception ('semi_major and r parameters are not provided but are needed to compute relative fluxes for climate calculation or when get_lvl_flux are being requested')
 
@@ -1964,8 +1962,7 @@ class inputs():
                                             x=-1/wno_planet[(wno_planet >= wno_planet[i]) &
                                                             (wno_planet <= wno_planet[i+1])])
                                     if i < len(wno_planet) - 1 else 0 for i in range(len(wno_planet))])
-            print('fine_flux_star:', np.shape(fine_flux_star)) # this is also bin_flux_star
-            
+                            
             # Linear extrapolation for the last point
             if len(wno_planet) > 2:
                 slope = (fine_flux_star[-2] - fine_flux_star[-3]) / (wno_planet[-2] - wno_planet[-3])
