@@ -592,8 +592,12 @@ def picaso(bundle,opacityclass, dimension = '1d',calculation='reflected',
 
 
         #see equation 18 Batalha+2019 PICASO 
-        returns['bond_albedo'] = (np.trapezoid(x=1/wno, y=albedo*opacityclass.unshifted_stellar_spec)/
-                                    np.trapezoid(x=1/wno, y=opacityclass.unshifted_stellar_spec))
+        try:
+            returns['bond_albedo'] = (np.trapezoid(x=1/wno, y=albedo*opacityclass.unshifted_stellar_spec)/
+                                      np.trapezoid(x=1/wno, y=opacityclass.unshifted_stellar_spec))
+        except:
+            returns['bond_albedo'] = (np.trapz(x=1/wno, y=albedo*opacityclass.unshifted_stellar_spec)/
+                                      np.trapz(x=1/wno, y=opacityclass.unshifted_stellar_spec))
 
         if ((not np.isnan(sa ) and (not np.isnan(atm.planet.radius))) ):
             returns['fpfs_reflected'] = albedo*(atm.planet.radius/sa)**2.0
@@ -610,7 +614,10 @@ def picaso(bundle,opacityclass, dimension = '1d',calculation='reflected',
         thermal = compress_thermal(nwno,flux_at_top, gweight, tweight)
         returns['thermal'] = thermal
         returns['thermal_unit'] = 'erg/s/(cm^2)/(cm)'#'erg/s/(cm^2)/(cm^(-1))'
-        returns['effective_temperature'] = (np.trapezoid(x=1/wno[::-1], y=thermal[::-1])/5.67e-5)**0.25
+        try:
+            returns['effective_temperature'] = (np.trapezoid(x=1/wno[::-1], y=thermal[::-1])/5.67e-5)**0.25
+        except:
+            returns['effective_temperature'] = (np.trapz(x=1/wno[::-1], y=thermal[::-1])/5.67e-5)**0.25
 
         if full_output: 
             atm.thermal_flux_planet = thermal
@@ -1929,6 +1936,8 @@ class inputs():
             bin_flux_star = opannection.unshifted_stellar_spec
             unit_flux =  'ergs cm^{-2} s^{-1} cm^{-1}'
         elif ('climate' in self.inputs['calculation'] or (get_lvl_flux)):
+            print('here2')
+            print('wno_planet: max=', np.max(wno_planet), '; min=', np.min(wno_planet))
             if not ((not np.isnan(semi_major)) & (not np.isnan(r))): 
                 raise Exception ('semi_major and r parameters are not provided but are needed to compute relative fluxes for climate calculation or when get_lvl_flux are being requested')
 
@@ -1943,12 +1952,20 @@ class inputs():
             fine_flux_star = 10**interpolator(np.log10(wno_planet))
             
             # Compute binned flux using trapezoidal integration
-            fine_flux_star = np.array([np.trapezoid(fine_flux_star[(wno_planet >= wno_planet[i]) &
-                                                        (wno_planet <= wno_planet[i+1])],
-                                        x=-1/wno_planet[(wno_planet >= wno_planet[i]) &
-                                                        (wno_planet <= wno_planet[i+1])])
-                                if i < len(wno_planet) - 1 else 0 for i in range(len(wno_planet))])
-
+            try:
+                fine_flux_star = np.array([np.trapezoid(fine_flux_star[(wno_planet >= wno_planet[i]) &
+                                                            (wno_planet <= wno_planet[i+1])],
+                                            x=-1/wno_planet[(wno_planet >= wno_planet[i]) &
+                                                            (wno_planet <= wno_planet[i+1])])
+                                    if i < len(wno_planet) - 1 else 0 for i in range(len(wno_planet))])
+            except:
+                fine_flux_star = np.array([np.trapz(fine_flux_star[(wno_planet >= wno_planet[i]) &
+                                                            (wno_planet <= wno_planet[i+1])],
+                                            x=-1/wno_planet[(wno_planet >= wno_planet[i]) &
+                                                            (wno_planet <= wno_planet[i+1])])
+                                    if i < len(wno_planet) - 1 else 0 for i in range(len(wno_planet))])
+            print('fine_flux_star:', np.shape(fine_flux_star)) # this is also bin_flux_star
+            
             # Linear extrapolation for the last point
             if len(wno_planet) > 2:
                 slope = (fine_flux_star[-2] - fine_flux_star[-3]) / (wno_planet[-2] - wno_planet[-3])
@@ -2127,7 +2144,7 @@ class inputs():
             if not isinstance(chem_method, str):
                 raise Exception('chem_method must be of type str')
 
-            #OPTION 1: Fixed chemistry, does not involve any addition of mh or cto as an input parametr
+            #OPTION 1: Fixed chemistry, does not involve any addition of mh or cto as an input parameter
             #this option will not evolve chemistry at all and will keep it fixed throughout the duration of the run 
             if chem_method=='fixed':
                 # let's store this here for safe keeping making sure there are no temperature or pressure 
@@ -4309,7 +4326,9 @@ class inputs():
         else:
             raise Exception("Must include 'reflected' or 'thermal' in calculation")
 
-    def surface_reflect(self, albedo, wavenumber, old_wavenumber = None):
+    def surface_reflect(self, albedo=None,
+                        surface_composition=None, surface_type=None,
+                        wavenumber=None, old_wavenumber = None):
         """
         Set atmospheric surface reflectivity. This preps the code to run a terrestrial 
         planet. This will automatically change the run to "hardsurface", which alters 
@@ -4318,12 +4337,18 @@ class inputs():
         ----------
         albedo : float
             Set constant albedo for surface reflectivity 
+        surface_composition : str
+            Specify surface composition for wavelength-dependent albedo
+        surface_type : str
+            Specify surface type for wavelength-dependent albedo
         wavenumber : list
             The desired wavenumber grid (inverse cm) for the albedo
             Make sure this wavenumber grid matches the wavenumber grid of the opacities
         old_wavenumber : list
             Original wavenumber grid (inverse cm) for the albedo which is used to interpolate onto the new wavenumber grid
         """
+
+        # constant wavelength surface albedo
         if isinstance(albedo, (float, int)):
             self.inputs['surface_reflect'] = np.array([albedo]*len(wavenumber))
         elif isinstance(albedo, (list, np.ndarray)): 
@@ -4331,6 +4356,29 @@ class inputs():
                 self.inputs['surface_reflect'] = albedo
             else: 
                 self.inputs['surface_reflect'] = np.interp(wavenumber, old_wavenumber, albedo)
+
+        # wavelength dependent surface albedo
+        # NOTE: Paragas+25 ApJ 981 130 also provide emissivity measurements for different temperatures that could be implemented in the future
+        elif isinstance(surface_composition, str) and isinstance(surface_type, str):
+            try:
+                # pull hemispherical reflectances from albedo file
+                # the albedo file is a reformatted version of the data in Figure 3 of Paragas+25 ApJ 981 130
+                albedo_file = os.path.join(os.environ['picaso_refdata'], 'surfaces', 'hemispherical_reflectances.h5')
+                with h5py.File(albedo_file, 'r') as f:
+                    albedo = f[surface_composition+'_'+surface_type][:]
+                    wavelength = f['wavelength'][:] # microns
+                    wavenumber_ref = 1e4/wavelength # cm^-1
+
+                # interpolate reflectances onto the wavenumber grid of the opacities
+                # TODO update terra_wavenumber_grid file, for now it's 661 grid
+                if isinstance(wavenumber, type(None)):
+                    terra_wavenumber_file = os.path.join(os.environ['picaso_refdata'], 'opacities', 'terra_wavenumber_grid.h5')
+                    with h5py.File(terra_wavenumber_file, 'r') as f:
+                        wavenumber = f['wavenumber'][:] # cm^-1
+                self.inputs['surface_reflect'] = np.interp(wavenumber, wavenumber_ref[::-1], albedo[::-1])
+            except:
+                raise Exception('You have selected a surface composition and/or surface type that PICASO does not recognize.')
+        
         self.inputs['hard_surface'] = 1 #let's the code know you have a hard surface at depth
     
     def clouds_reset(self):
@@ -5099,6 +5147,11 @@ class inputs():
                 kzz = 'Self Consistent Treatment' 
             print('Kzz for chem:',kzz )
     
+        if self.inputs.get('hard_surface', 0):
+            print('Hard Surface:', True)
+        else:
+            print('Hard Surface:', False)
+
         return 
     
     def inputs_climate(self, temp_guess= None, pressure= None, rfaci = 1,

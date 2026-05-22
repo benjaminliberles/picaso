@@ -1784,7 +1784,7 @@ def get_fluxes(Atmosphere, OpacityWEd, OpacityNoEd,ScatteringPhase,
 
 def update_rfacv(bundle, Atmosphere, OpacityWEd, OpacityNoEd=None,
                  ScatteringPhase=None, Disco=None, Opagrid=None, F0PI=None,
-                 flux_net_v_layer=None,
+                 flux_net_v=None,
                  do_holes=False, fhole=0.0, OpacityWEd_clear=None, OpacityNoEd_clear=None,
                  verbose=True):
     """
@@ -1809,8 +1809,8 @@ def update_rfacv(bundle, Atmosphere, OpacityWEd, OpacityNoEd=None,
         Any opacity grid info such as wavelength grids, temperature pressure grids, tmax and tmin
     F0PI : ndarray
         Stellar spectrum if it exists otherwise this is just 1s array
-    flux_net_v_layer : arr
-        Net visible fluxes
+    flux_net_v : arr
+        Net visible level fluxes
     do_holes : bool
         Default=False; if True, computes the fluxes with holes
     fhole : float
@@ -1838,20 +1838,24 @@ def update_rfacv(bundle, Atmosphere, OpacityWEd, OpacityNoEd=None,
     DTAU = OpacityWEd.DTAU
 
     # check if we need to grab fluxes
-    if np.any(flux_net_v_layer==None):
+    if np.any(flux_net_v==None):
         if verbose: print('I dont have fluxes, let me compute them')
         if do_holes == True:
-            flux_net_v_layer, _, _, _, _, _, _, _ = get_fluxes(Atmosphere, OpacityWEd, OpacityNoEd, ScatteringPhase,
+            _, flux_net_v, _, _, _, _, _, _ = get_fluxes(Atmosphere, OpacityWEd, OpacityNoEd, ScatteringPhase,
                             Disco, Opagrid, F0PI, reflected=True, thermal=False, 
                             do_holes=True, fhole=fhole, hole_OpacityWEd=OpacityWEd_clear, hole_OpacityNoEd=OpacityNoEd_clear)
         else:                
-            flux_net_v_layer, _, _, _, _, _, _, _ = get_fluxes(Atmosphere, OpacityWEd, OpacityNoEd, ScatteringPhase,
+            _, flux_net_v, _, _, _, _, _, _ = get_fluxes(Atmosphere, OpacityWEd, OpacityNoEd, ScatteringPhase,
                             Disco, Opagrid, F0PI, reflected=True, thermal=False,
                             do_holes=False)
         
-        FNETV = flux_net_v_layer[0,0,0]
+        FNETV = flux_net_v[0, 0, 0]
+        if FNETV == np.nan:
+            print('NAN INSIDE FLUX CALC')
     else: # FNETV has to be processed differently depending on if is coming straight from get_fluxes or t_start
-        FNETV = flux_net_v_layer[0]
+        FNETV = flux_net_v[0]
+        if FNETV == np.nan:
+            print('NAN OUTSIDE FLUX CALC')
                             
     """
     Update the rfacv value based on the analytic prescription for tidally locked rocky planets.
@@ -3084,7 +3088,7 @@ def profile(bundle, nofczns, nstr, temp, pressure,
     ## begin bigger loop which gets opacities
     for iii in range(itmx):
         if do_holes == True:
-            temp, dtdp, all_profiles,  flux_net_ir_layer,flux_net_v_layer, flux_plus_ir_attop = t_start(
+            temp, dtdp, all_profiles,  flux_net_ir_layer, flux_net_v, flux_plus_ir_attop = t_start(
                 nofczns,nstr,convergence_criteria, rfaci, rfacv, tidal,
                 Atmosphere, OpacityWEd, OpacityNoEd,ScatteringPhase, Disco,Opagrid, AdiabatBundle,
                 F0PI,
@@ -3092,7 +3096,7 @@ def profile(bundle, nofczns, nstr, temp, pressure,
                 verbose=verbose, moist = moist, egp_stepmax = egp_stepmax, 
                 do_holes=do_holes, fhole=fhole, hole_OpacityWEd=OpacityWEd_clear,hole_OpacityNoEd=OpacityNoEd_clear)
         else:
-            temp, dtdp, all_profiles,  flux_net_ir_layer,flux_net_v_layer, flux_plus_ir_attop = t_start(
+            temp, dtdp, all_profiles,  flux_net_ir_layer, flux_net_v, flux_plus_ir_attop = t_start(
                     nofczns,nstr,convergence_criteria, rfaci, rfacv, tidal,
                     Atmosphere, OpacityWEd, OpacityNoEd,ScatteringPhase, Disco,Opagrid, AdiabatBundle,
                     F0PI,
@@ -3132,7 +3136,7 @@ def profile(bundle, nofczns, nstr, temp, pressure,
         if analytic_rfacv:
             # we can skip RT if we have fluxes already
             rfacv = update_rfacv(bundle=bundle, Atmosphere=Atmosphere, OpacityWEd=OpacityWEd,
-                                 flux_net_v_layer=flux_net_v_layer)
+                                 flux_net_v=flux_net_v)
             bundle.inputs['climate']['rfacv'] = rfacv #bookkepping current rfacv
             all_rfacv = np.append(all_rfacv, rfacv)
 
@@ -3169,7 +3173,7 @@ def profile(bundle, nofczns, nstr, temp, pressure,
         # TO DO : add chemistry and also condense last three "all" variables into one tuple
         RETURNS = [conv_flag, pressure, temp , dtdp, 
                         CloudParameters, cld_out,
-                        flux_net_ir_layer, flux_net_v_layer, flux_plus_ir_attop, 
+                        flux_net_ir_layer, flux_net_v, flux_plus_ir_attop, 
                         all_profiles, all_opd, all_kzz, rfacv, all_rfacv]
         
         ert = 0.0 # avg temp change
