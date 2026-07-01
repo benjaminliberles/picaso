@@ -4,12 +4,14 @@ irradiated=false #options: true or false (if true, user needs to input star prop
 calc_type='spectrum'#spectrum climate or retrieval
 
 [InputOutput]
-observation_data = ['']
 coord_key = 'central_wavelength' 
 y_key = 'transit_depth'
 error_key = 'transit_depth_error'
 retrieval_output = ''
 spectrum_output = ''
+
+[InputOutput.observation_data]
+instrument1 = ''
 
 
 [OpticalProperties]
@@ -192,7 +194,7 @@ sig =2
 
 [clouds.cloud1.brewster_mie]
 condensate='Na2S'
-decay_type = 'slab' # can be 'slab' or 'decay' #make sure to add respective kwargs below
+decay_type = 'slab' # can be 'slab' or 'deck' #make sure to add respective kwargs below
 decay_type_options = ['slab', 'deck']
 slab_kwargs={ptop= 1, dp= 1, reference_tau= 1} # ptop: log bar, dp: log bar, ref tau: micron
 deck_kwargs={ptop= -1, dp= 1} # ptop: log bar, dp: log bar
@@ -202,7 +204,7 @@ lognorm_kwargs = {sigma=1, lograd = -4}  #log rad in log cm
 hansen_kwargs = {b=1 , lograd = -4}
 
 [clouds.cloud1.brewster_grey]
-decay_type = 'slab' # can be 'slab' or 'decay' #make sure to add respective kwargs below
+decay_type = 'slab' # can be 'slab' or 'deck' #make sure to add respective kwargs below
 decay_type_options = ['slab', 'deck']
 alpha=-4 # used for wavelength dependent scattering cross section 
 ssa=1 # single scattering albedo set to 1 
@@ -249,6 +251,6 @@ log=true
 #uniform_kwargs={min=0.005, max=2}
 #log=true
 
-[sampler]
+[retrieval.sampler]
 code='dynesty'#options: ultranest, emcee, pymultinest, dynesty
 sampler_kwargs={live_points = 100}

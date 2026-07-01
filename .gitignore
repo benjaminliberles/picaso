@@ -13,6 +13,7 @@
 *.h5
 *.hdf5
 *.npz
+dat_to_picaso_retrieval_nc.py
 
 # Jupyter Notebooks
 .ipynb_checkpoints
