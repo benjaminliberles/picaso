@@ -2,7 +2,6 @@ import pandas as pd
 import os 
 import numpy as np
 __refdata__ = os.environ.get('picaso_refdata')
-import pickle as pk
 import astropy.constants as c
 import scipy.interpolate as sci
 
