@@ -4,13 +4,17 @@ irradiated=false #options: true or false (if true, user needs to input star prop
 calc_type='spectrum'#spectrum climate or retrieval
 
 [InputOutput]
-observation_data = ['']
-coord_key = 'central_wavelength' 
-y_key = 'transit_depth'
-error_key = 'transit_depth_error'
 retrieval_output = ''
 spectrum_output = ''
 
+# needed for retrievals 
+[ObservationData]
+filenames = []
+data = '' # specifies the column name or xarray data_var that is being fit 
+data_unit = '' # astropy unit of column name if data is provided in csv, not xarray format 
+coord = '' 
+coord_unit = '' # astropy unit of column name if data is provided in csv, not xarray format 
+error = ''
 
 [OpticalProperties]
 opacity_file = '_default_/opacities/opacities.db' # single db 
@@ -244,10 +248,11 @@ min=0.005
 max=2
 log=true
 
-#[retrieval.errinf]
-#prior="uniform"
-#uniform_kwargs={min=0.005, max=2}
-#log=true
+
+[retrieval.errinf]
+prior="uniform"
+uniform_kwargs={min=0.005, max=2}
+log=true
 
 [sampler]
 code='dynesty'#options: ultranest, emcee, pymultinest, dynesty

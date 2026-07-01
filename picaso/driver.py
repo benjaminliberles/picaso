@@ -18,6 +18,12 @@ import sys
 from schwimmbad import MPIPool
 dynesty.utils.pickle_module = dill
 
+import os
+import numpy as np
+import pandas as pd
+import xarray as xr
+from astropy import units as u
+
 # import ultranest
 
 
@@ -79,8 +85,218 @@ def is_valid_astropy_unit(unit_str):
     except (ValueError, TypeError):
         return False
 
-#retrieval funs
+def convert_flux_units(xgrid, flux, to_f_unit, flux_err=None, xgrid_unit='cm^(-1)', f_unit='erg*cm^(-3)*s^(-1)'): 
+    """
+    Converts both flux and its associated error to new units using synphot's 
+    SourceSpectrum. Automatically handles axis flipping if the input grid 
+    direction needs to match synphot's internally sorted waveset.
+    
+    Parameters
+    ----------
+    xgrid : ndarray
+        Wavelength or wavenumber array 
+    flux : ndarray
+        Flux array 
+    to_f_unit : str 
+        Astropy approved string unit for the output flux
+    flux_err : ndarray, optional
+        Uncertainty/error array on the flux. If provided, it is scaled 
+        identically to the flux.
+    xgrid_unit : str, default 'cm^(-1)'
+        Current coordinate units.
+    f_unit : str, default 'erg*cm^(-3)*s^(-1)'
+        Current flux units.
+        
+    Returns
+    -------
+    astropy.units.Quantity or tuple
+        If flux_err is None: returns converted flux.
+        If flux_err is provided: returns tuple of (converted_flux, converted_flux_err).
+    """
+    # 1. Setup the SourceSpectrum with actual flux
+    ST_SS = SourceSpectrum(
+        Empirical1D, 
+        points=xgrid * u.Unit(xgrid_unit), 
+        lookup_table=flux * u.Unit(f_unit)
+    )
+    
+    # 2. Evaluate at the native waveset to get converted flux
+    flux_converted = ST_SS(ST_SS.waveset, flux_unit=u.Unit(to_f_unit))
+    
+    # 3. Handle original axis sorting rules
+    # If original units were inverse cm and ordered increasing, synphot flips 
+    # the internal waveset to sort by increasing wavelength. We match that logic.
+    if (xgrid_unit == 'cm^(-1)') and (xgrid[1] > xgrid[0]):
+        flux_converted = flux_converted[::-1]
+
+    # 4. Handle error conversion if provided
+    if flux_err is not None:
+        # Determine the exact wavelength-dependent scale factor applied by synphot
+        # (flux_converted / flux) handles any non-trivial per-pixel unit scaling
+        scale_factor = flux_converted.value / flux
+        
+        # Scale the error and attach the destination unit
+        flux_err_converted = (flux_err * scale_factor) * u.Unit(to_f_unit)
+        
+        return flux_converted, flux_err_converted
+        
+    return flux_converted
+
+def convert_to_wavenumber(value, input_unit):
+    """
+    Converts a given grid from a specified Astropy unit (or string representation)
+    to wavenumber in inverse centimeters (cm^-1).
+    
+    Parameters:
+    -----------
+    value : float, numpy.ndarray, or astropy.units.Quantity
+        The grid values to convert.
+    input_unit : str or astropy.units.Unit
+        The unit of the input values (e.g., 'micron', 'nm', 'Hz', 'THz', 'eV', u.micron).
+        
+    Returns:
+    --------
+    array
+        The converted values in cm^-1 (with astropy unit attached).
+        Use .value to extract just the raw number/array if needed.
+    """
+    # 1. Ensure input_unit is an actual Astropy Unit object
+    if isinstance(input_unit, str):
+        # Map common custom shorthand strings if needed, otherwise parse directly
+        if input_unit.strip().lower() in ['inv_cm', 'cm-1']:
+            unit_obj = u.cm**-1
+        else:
+            unit_obj = u.Unit(input_unit)
+    else:
+        unit_obj = input_unit
+
+    # 2. Attach the unit to the value if it doesn't already have one
+    if not isinstance(value, u.Quantity):
+        quantity = value * unit_obj
+    else:
+        quantity = value.to(unit_obj) # Ensure it matches the specified input_unit
+
+    # 3. Perform the conversion using spectral equivalencies
+    # This automatically handles wavelength <-> frequency <-> energy conversions
+    wavenumber_quantity = quantity.to(u.cm**-1, equivalencies=u.spectral())
+    
+    return wavenumber_quantity.value
+
+def parse_data(filenames, coord, data,  error, coord_unit=None, data_unit=None):
+    """
+    Parses observational data files (ASCII or xarray) for PICASO.
+
+    Parameters
+    ----------
+    filenames : list of str or str
+        One path or list of paths to the data files 
+    coord : str 
+        name of coordinate (should map to column name or xarray coord)
+    data : str 
+        name of data to fit (should map to column name or xarray data_var)
+    error : str 
+        name of data error to use (should map to column name or xarray coord)
+    coord_unit : str 
+        Name of astropy unit for coordinate
+    data_unit : str 
+        Name of astropy unit for data
+
+    Returns
+    -------
+    dict
+        Dictionary where keys are filenames without extensions and values are
+        lists of [wavenumber, to_fit, to_fit_error].
+    """
+    returns = {}
+    if isinstance(filenames, str): filenames = [filenames]
+
+    for filename in filenames:
+        ext = os.path.splitext(filename)[1].lower()
+        # 1) determine if the files are comma separated ascii files or xarray
+        if ext in ['.csv', '.txt', '.ascii', '.dat']:
+            # 2) if they are comma separated ascii files the user also needs to specify the units of the data.
+            # the function should check that units were specified via kwarg input.
+            if ((data_unit is None) or (coord_unit is None)):
+                raise ValueError(f"Units must be specified for ASCII file: {filename}")
+            
+            df = pd.read_csv(filename)
+            
+            # 3) convert the ascii read data to an xarray with unit specification 
+            # where all over columns are converted to data_vars with their column name
+            ds = xr.Dataset.from_dataframe(df.set_index(coord))
+            ds.coords[coord].attrs['units'] = coord_unit
+            ds[data].attrs['units'] = data_unit
+            ds[error].attrs['units'] = data_unit
+        else:
+            # Assume xarray
+            ds = xr.load_dataset(filename)
+
+        # 4) the user must specify the name of the data it wants to fit through a variable called "data" 
+        # data variable should now match the name of a data_var 
+        # there should also be a column specifying the error
+        if data not in ds.data_vars:
+            raise ValueError(f"Variable '{data}' not found in {filename}")
+        if error not in ds.data_vars:
+            raise ValueError(f"Error variable '{error}' not found in {filename}")
+
+        # 5) Add wavenumber coordinate called wavenumber
+        # Could be redundant but that is okay just a verification
+        wavenumber = convert_to_wavenumber(ds.coords[coord].values, ds.coords[coord].attrs['units'])
+        ds = ds.assign_coords(wavenumber=([coord], wavenumber))
+        ds.coords['wavenumber'].attrs['units'] = 'cm^(-1)'
+
+        # 6) if data unit is flux it needs to be converted to picaso units erg/cm3/s
+        current_unit_str = ds[data].attrs.get('units', '')
+        # Lets try and convert the data and add it to the data bundle
+        try: 
+            current_unit = u.Unit(current_unit_str)
+            target_unit = u.Unit('erg/(s*cm**2*cm)')
+            flux_converted, flux_err_converted = convert_flux_units(
+                ds.coords['wavenumber'].values,
+                ds.data_vars[data].values,
+                to_f_unit = current_unit_str,
+                flux_err = ds.data_vars[error].values,
+                f_unit = target_unit
+            )
+            ds[data].values = flux_converted
+            ds[error].values = flux_err_converted
+            ds[data].attrs['units'] = 'erg/(s*cm**2*cm)'
+            ds[error].attrs['units'] = 'erg/(s*cm**2*cm)'
+        except: 
+            print('Flux unit converstion failed so assuming unitless or not convertable data')
+            pass 
+
+        ds_sorted = ds.sortby('wavenumber')
+        
+        name = os.path.splitext(os.path.basename(filename))[0]
+        returns[name] = [ds_sorted.coords['wavenumber'].values, 
+                         ds_sorted[data].values, 
+                         ds_sorted[error].values]
+        
+    return returns
+
 def get_data(config): 
+    """
+    Processes observational data using parse_data.
+    """
+    observations_config = config.get('ObservationData')
+
+    # Leaving this out for now until there is rationale 
+    # to enforce mapping. For now parse_data will try and 
+    # convert units and units for non flux type data is not converted
+
+    # obs_type = config['observation_type']
+    # if obs_type=='thermal':
+    #     to_fit = 'flux'
+    # elif obs_type=='reflected':
+    #     to_fit = 'flux'
+    # elif obs_type=='transmission':
+    #     to_fit = 'transit_depth'
+        
+    return parse_data(**observations_config)
+
+#retrieval funs
+def get_data_old(config): 
     """
     Create a function to process your data in any way you see fit.
     Here we are using the ExoTiC-MIRI data 
@@ -206,8 +422,8 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
     cube = np.atleast_2d(cube)  # ensure shape (N_samples, N_params)
     n_samples = cube.shape[0]
 
-    # initialize storage
-    y_model = {key: [] for key in config['InputOutput']['observation_data']}
+    # initialize storage based on observation filenames
+    y_model = {os.path.splitext(os.path.basename(key))[0]: [] for key in config['ObservationData']['filenames']}
 
     if not retrieval:
         profiles={}                                   
@@ -230,6 +446,10 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
         d_dict = config['object']['distance']
         d = d_dict['value'] * u.Unit(d_dict['unit']).to(u.m)
 
+        # TODO NEEDS TO BE MADE FLEX FOR ALL TYPES OF FITS
+        # resulty should be defined based on config['observation_type']
+        # currently i have made it so that data_parser always returns picaso units
+        # for flux but distance/radius scaling needs to be incorporated somewhere
         resultx = out['wavenumber']
         resulty = 1e-8 * (R / d) ** 2 * out['thermal']
 
@@ -246,7 +466,7 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
             pass
 
         # rebin to observed wavelengths
-        for obs_key in config['InputOutput']['observation_data']:
+        for obs_key in DATA_DICT.keys():
             xdata, _, _ = DATA_DICT[obs_key]
             _, rebinned = mean_regrid(resultx, resulty, newx=xdata)
             y_model[obs_key].append(rebinned)
@@ -299,7 +519,7 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools):
         sigma_all = []
         extra_term_all = []
 
-        for key in config['InputOutput']['observation_data']:
+        for key in DATA_DICT.keys():
             xdata, ydata, edata = DATA_DICT[key]
             y_model = y_model_dict[key][j]   # pick j-th sample
 
@@ -703,9 +923,7 @@ def setup_spectrum_class(config, opacity, param_tools, stage=None):
         df_mixingratio = pd.merge(A.inputs['atmosphere']['profile'].loc[:,['temperature', 'pressure']], 
                                   df_cleaned, left_index=True, right_index=True, how='inner')
     elif chem_type!='': 
-        print(chem_type, f'chem_{chem_type}')
         chemistry_function = getattr(param_tools, f'chem_{chem_type}')
-        print(chem_config[chem_type])
         df_mixingratio  = chemistry_function(**chem_config[chem_type])#note, this includes P and T already
     #set final with chem
     A.atmosphere(df = df_mixingratio)

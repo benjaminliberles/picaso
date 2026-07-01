@@ -229,7 +229,7 @@ def setup_config():
     else:
         # dynamically finds a driver.toml in the below datapath platform independently
         # DRIVER_CONFIG = "/Users/sjanson/Desktop/code/picaso/reference/input_tomls/driver.toml"
-        DRIVER_CONFIG = str(Path(__file__).resolve().parents[2] / "reference" / "input_tomls" / "driver.toml")
+        DRIVER_CONFIG = os.path.join(os.environ['picaso_refdata'],'input_tomls','driver.toml')
         st.text_input('Enter path to driver.toml', value=DRIVER_CONFIG)
         if isinstance(DRIVER_CONFIG, str):
             with open(DRIVER_CONFIG, "rb") as f:
@@ -323,7 +323,7 @@ def render_pressure_and_temperature():
                 config['temperature'][temp_profile][pure_attr] = st.selectbox(f"{temp_profile.capitalize()} {pure_attr.capitalize()} Options", config['temperature'][temp_profile][attr], index=None)
 
     # GRAPH PRESSURE-TEMPERATURE
-    if st.button('See Pressure-Temperature graph'):
+    if st.button('See Pressure-Temperature plot'):
         data_class = run_spectrum_class('temperature')
         streamlit_bokeh(jpi.pt({'layer': data_class.inputs['atmosphere']['profile']}))
 
@@ -358,7 +358,7 @@ def render_chemistry():
                 'Values': molecule_values,
                 'Pressures (bar)': [[str(ele) for ele in config['chemistry'][chem_method][mole].get('pressures', '')] for mole in molecules],
             })
-            st.info('Molecule names are case sensitive (ex: TiO, H2O). You only need to specify a pressure if you provide multiple values for a molecule (to indicate what altitude the amount of the molecule changes). Only correctly filled out rows will be included in the graph.')
+            st.info('Molecule names are case sensitive (ex: TiO, H2O). You only need to specify a pressure if you provide multiple values for a molecule (to indicate what altitude the amount of the molecule changes). Only correctly filled out rows will be included in the plot.')
             chem_free_grid = st.data_editor(chem_free_df, num_rows="dynamic")
             
             # FREE CHEM: WRITE RESULTS TO A DATAFRAME
@@ -490,7 +490,7 @@ def run_spectrum():
             wavenumber, albedo_or_fluxes = df['wavenumber'] , df[observation_key]
             wavenumber, albedo_or_fluxes = jdi.mean_regrid(wavenumber, albedo_or_fluxes, R=spectral_resolution)
             spec_fig = jpi.spectrum(wavenumber, albedo_or_fluxes, plot_width=500, x_range=wavelength_range)
-            # graph spectrum
+            # plot spectrum
             streamlit_bokeh(spec_fig, theme="streamlit", key="spectrum")
         except Exception as e:
             st.warning('Make sure you have configured temperature, pressure, and chemistry before running a spectrum.')
@@ -688,9 +688,57 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
         spectrum_fig = jpi.spectrum(WNO_LIST, ALB_LIST, palette=[(255,0,0,0.3)], plot_width=500,x_range=wavelength_range)
     return pressure_temperature_fig, mixing_ratio_bokeh_fig, clouds_fig, spectrum_fig
 
+def render_additional_retrieval_parameters(parameter_dict):
+    #adds other retrieval parameters: vsini, data offsets, error inflation
+    return parameter_dict
+
 def render_retrievals():
+
+    # Configure Data 
+    st.subheader("Observational Data Configuration")
+    default_paths = config.get('ObservationData', {}).get('filepaths', [])
+    if isinstance(default_paths,list):
+        if len(default_paths)>1: 
+            default_paths="\n".join(default_paths)
+        elif len(default_paths)==1: 
+            default_paths=str(default_paths[0])
+        else: 
+            default_paths=''
+    
+    obs_data_input = st.text_area("Enter in the datapath(s) to your observation data (one per line)", 
+                                   value=default_paths)
+    
+    # Process the text area input into a list
+    if obs_data_input:
+        config['ObservationData']['filenames'] = [line.strip() for line in obs_data_input.split('\n') if line.strip()]
+    else:
+        config['ObservationData']['filenames'] = []
+
+    # Determine default data
+    units_df = format_config_section_for_df(config['ObservationData'], ignore_keys='filenames')
+    
+    st.text('Specify column, coord, or data_var names and units. Units are only required if not specified through xarray.')
+    st.text('Units should be in astropy format. If unitless (e.g., albedo, or transit depth) enter unitless ')
+    edited_units = st.data_editor(pd.DataFrame([units_df]))
+    #edited_units = edited_units.to_dict(orient='records')[0]
+    for i in edited_units.keys(): 
+        config['ObservationData'][i]=edited_units[i].values[0]
+
+    if st.button("Parse and Verify Data"):
+        try:
+            data_dict = go.parse_data(**config['ObservationData'])
+            st.success(f"Successfully parsed {len(data_dict)} files: {list(data_dict.keys())}")
+            for key, val in data_dict.items():
+                st.write(f"**{key}**: {len(val[0])} points, wavenumber range: {min(val[0]):.2f} - {max(val[0]):.2f}")
+            #fig = jpi.plot_errorbar(x,y,e,plot=None)
+        except Exception as e:
+            st.error(f"Error parsing data: {e}")
+
+
     # LIST OUT ALL FREE PARAMETERS
     parameter_handler = render_free_parameter_selection()
+
+    # ADD Additional retrieval parameters?
 
     prior_set_items = {}
     retrieval_stage_state_manager = {} # for streamlit rendering organization
@@ -701,6 +749,8 @@ def render_retrievals():
         prior_set_items = render_ranges_for_selected_parameters(parameter_handler)
     st.divider()
 
+    st.subheader("Set and test your prior bounds")
+    st.text('Now that you have set your ')
 
     ALL_TOMLS = []
     save_all_class_pt = []
@@ -742,11 +792,11 @@ def render_retrievals():
         st.divider()
 
         # PLOT SPECTRUM
-        retrieval_stage_state_manager['see_prior_spectrums'] =  st.selectbox("See Spectrums for Priors?", ("Yes", "No"), index=None)
+        retrieval_stage_state_manager['see_prior_spectrums'] =  st.selectbox("Run Samples for Full Spectrums?", ("Yes", "No"), index=None)
         if retrieval_stage_state_manager['see_prior_spectrums'] == 'Yes':
             _, _, _, spectrum_fig = sample_plots(ALL_TOMLS, save_all_class_pt, nsamples, run_clouds=('clouds' in config))
             streamlit_bokeh(spectrum_fig)
-    config['InputOutput']['observation_data'] = st.text_input("Enter in the datapath(s) to your observation data for retrievals", value = config.get('InputOutput').get('observation_data', ['']))
+    
     return retrieval_object
 
 def render_download_config(retrieval_object):
