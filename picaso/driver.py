@@ -31,6 +31,18 @@ chem_options = ['visscher', 'free', 'chemeq_on_the_fly','userfile']
 cloud_options = ['brewster_grey', 'brewster_mie', 'virga', 'flex_fsed', 'hard_grey', 'userfile']
 pt_options = ['userfile','isothermal', 'knots', 'guillot', 'sonora_bobcat',  'madhu_seager_09_inversion','madhu_seager_09_noinversion', 'zj24'] #, 'molliere_20', 'Kitzman_20', 
 
+# Mappings for observation types to picaso calculation types
+OBSERVATION_CALC_MAP = {
+    'thermal': 'thermal',
+    'fpfs_thermal': 'thermal',
+    'albedo': 'reflected',
+    'fpfs_reflected': 'reflected',
+    'transit_depth': 'transmission',
+    'reflected': 'reflected',
+    'transmission': 'transmission'
+}
+
+
 def run(driver_file=None,driver_dict=None,return_class=False):
     if isinstance(driver_file,str):
         with open(driver_file, "rb") as f:
@@ -56,7 +68,8 @@ def run(driver_file=None,driver_dict=None,return_class=False):
      
     if config['calc_type'] =='spectrum':
         picaso_class = setup_spectrum_class(config,opacity,param_tools)
-        output =  picaso_class.spectrum(opacity, full_output=True, calculation = config['observation_type']) 
+        output =  picaso_class.spectrum(opacity, full_output=True, 
+                                        calculation = OBSERVATION_CALC_MAP.get(config['observation_type'], config['observation_type'])) 
     elif config['calc_type']=='retrieval':
         #Create output directory
         os.makedirs(config['InputOutput']['retrieval_output'], exist_ok=True)
@@ -321,11 +334,12 @@ def get_data_old(config):
     observations = config['InputOutput']['observation_data']
     
     ## this could be another entry in the toml file to give extra flexibility
-    if obs_type=='thermal':
+    calc_type = OBSERVATION_CALC_MAP.get(obs_type, obs_type)
+    if calc_type=='thermal':
         to_fit = 'flux'
-    elif obs_type=='reflected':
+    elif calc_type=='reflected':
         to_fit = 'flux'
-    elif obs_type=='transmission':
+    elif calc_type=='transmission':
         to_fit = 'transit_depth'
 
     returns = {}
@@ -440,13 +454,16 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
                     set_dict_value(config, key, row[i])
 
         # compute spectrum
+        calculation = OBSERVATION_CALC_MAP.get(config['observation_type'],None)
+        if calculation == None: 
+            raise Exception (rf'Not a recognized observation_type. Options are: thermal fpfs_thermal albedo fpfs_reflected transit_depth reflected transmission. Input was {calculation}')
+        
         picaso_class = setup_spectrum_class(config, opacity=OPA, param_tools=param_tools)
-        out = picaso_class.spectrum(OPA, full_output=True, calculation=config['observation_type'])
+        out = picaso_class.spectrum(OPA, full_output=True, 
+                                    calculation=calculation)
 
         resultx = out['wavenumber']
-        result_key = {'thermal': 'thermal',
-                      'reflected': 'albedo',
-                      'transmission': 'transit_depth'}[config['observation_type']]
+        result_key = config['observation_type']
         resulty = out[result_key]
         if config['observation_type'] == 'thermal':
             R_dict = config['object']['radius']
@@ -531,14 +548,15 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools):
             xdata, ydata, edata = DATA_DICT[key]
             y_model = y_model_dict[key][j].copy()   # pick j-th sample
             ydata_ = ydata
+            calc_type = OBSERVATION_CALC_MAP.get(config['observation_type'])
 
             # add offsets
-            if config['observation_type'] == 'transmission' and key in config.get("retrieval", {}).get("offset", {}):
+            if calc_type == 'transmission' and key in config.get("retrieval", {}).get("offset", {}):
                 icube = list(fitpars.keys()).index(f'offset.{key}')
                 y_model += cube[j, icube]
 
             # add scalings
-            if config['observation_type'] == 'thermal' and key in config.get("retrieval", {}).get("scaling", {}):
+            if calc_type == 'thermal' and key in config.get("retrieval", {}).get("scaling", {}):
                 icube = list(fitpars.keys()).index(f'scaling.{key}')
                 y_model *= cube[j, icube]
 

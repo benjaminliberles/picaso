@@ -1,5 +1,5 @@
-observation_type = 'thermal' # options: 'transmission', 'thermal', 'reflected' or a combo e.g. transmission+thermal
-observation_type_options = ['thermal', 'transmission', 'reflected']
+observation_type = 'thermal' # options: 'thermal', 'fpfs_thermal', 'transit_depth', 'albedo', 'fpfs_reflected' or a combo e.g. transit_depth+thermal
+observation_type_options = ['thermal', 'fpfs_thermal', 'transit_depth', 'albedo', 'fpfs_reflected']
 irradiated=false #options: true or false (if true, user needs to input star properties)
 calc_type='spectrum'#spectrum climate or retrieval
 

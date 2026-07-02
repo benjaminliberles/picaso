@@ -192,14 +192,8 @@ def jacobian(driver_file=None, driver_dict=None, picaso_class = None, params=Non
         #collect values 
         all_values[i] = val
 
-    obs_type = config['observation_type']
-    observation_key_mapping = {
-        'thermal': 'thermal',
-        'reflected': 'albedo',
-        'transmission': 'transit_depth'
-    }
-    spec_key = observation_key_mapping.get(obs_type)
-    if not spec_key:
+    obs_type = config.get('observation_type')
+    if not obs_type:
         raise Exception(f'Observation type {obs_type} not supported for Jacobian')
 
     def get_spec(cfg,fun_name=None, fun_kwargs=None):
@@ -213,8 +207,12 @@ def jacobian(driver_file=None, driver_dict=None, picaso_class = None, params=Non
                 if running is None: 
                     raise Exception(rf"uh oh, picaso_class does not have the function {fun_name}")
                 running(**fun_kwargs)
-            out = class_modified.spectrum(opacityclass, calculation=cfg['observation_type'])
-        return out[spec_key]
+            calculation=OBSERVATION_CALC_MAP.get(cfg['observation_type'],None)
+            if calculation == None: 
+                raise Exception (rf'Not a recognized observation_type. Options are: thermal fpfs_thermal albedo fpfs_reflected transit_depth reflected transmission. Input was {calculation}')
+            out = class_modified.spectrum(opacityclass, 
+                                          calculation=calculation)
+        return out[obs_type]
        
     jacobian_cols = []
     

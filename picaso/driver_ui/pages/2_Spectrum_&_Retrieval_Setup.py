@@ -295,7 +295,7 @@ def render_object():
     editable_section(config['object'], 'object')
 
 def render_phase_angle():
-    if 'reflected' in (config['observation_type']):
+    if go.OBSERVATION_CALC_MAP.get(config['observation_type']) == 'reflected':
         config['geometry']['phase']['value'] = st.number_input('Enter phase angle in radians 0-2π', min_value=0, max_value=6, value=0)
 
 # ============================================
@@ -493,14 +493,7 @@ def run_spectrum():
         try:
 
             df = go.run(driver_dict=clean_dictionary(config))
-            #TODO : thermal could either map to thermal or fpfs_thermal. reflected could either map to albedo or fpfs_reflected
-            #spectral key options: fpfs_thermal, fpfs_reflected, transit_depth, albedo, temp_brightness, thermal
-            observation_key_mapping = {
-                'thermal': 'thermal',
-                'reflected': 'albedo',
-                'transmission': 'transit_depth'
-            }
-            observation_key = observation_key_mapping[config['observation_type']]
+            observation_key = config['observation_type']
             wavenumber, albedo_or_fluxes = df['wavenumber'] , df[observation_key]
             wavenumber, albedo_or_fluxes = jdi.mean_regrid(wavenumber, albedo_or_fluxes, R=spectral_resolution)
             spec_fig = jpi.spectrum(wavenumber, albedo_or_fluxes, plot_width=500, x_range=wavelength_range)
@@ -689,17 +682,11 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
         ALB_LIST = []
         for prior_toml in ALL_TOMLS:
             df = go.run(driver_dict=clean_dictionary(prior_toml))
-            if prior_toml['observation_type'] == 'transmission':
-                wnos, transit_depth = jdi.mean_regrid(df['wavenumber'],
-                                                df['transit_depth'], R=spectral_resolution)
-                WNO_LIST.append(wnos)
-                ALB_LIST.append(transit_depth)
-            else:
-                obs_key = 'thermal' if prior_toml['observation_type'] == 'thermal' else 'albedo'
-                wno, alb = df['wavenumber'] , df[obs_key]
-                wno, alb = jdi.mean_regrid(wno, alb, R=spectral_resolution)
-                WNO_LIST.append(wno)
-                ALB_LIST.append(alb)
+            obs_key = prior_toml['observation_type']
+            wno, alb = df['wavenumber'] , df[obs_key]
+            wno, alb = jdi.mean_regrid(wno, alb, R=spectral_resolution)
+            WNO_LIST.append(wno)
+            ALB_LIST.append(alb)
 
         spectrum_fig = jpi.spectrum(WNO_LIST, ALB_LIST, palette=[(255,0,0,0.3)], plot_width=500,x_range=wavelength_range)
     return pressure_temperature_fig, mixing_ratio_bokeh_fig, clouds_fig, spectrum_fig
