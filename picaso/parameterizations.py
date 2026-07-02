@@ -73,7 +73,7 @@ class Parameterize():
         elif 'hansen' in distribution: 
             a = 10**hansen_kwargs['lograd']
             b = hansen_kwargs['b']
-            dist = (10**self.radius[species])**((1-3*b)/b)*np.exp(-self.radius[species]/(a*b))
+            dist = self.radius[species]**((1-3*b)/b)*np.exp(-self.radius[species]/(a*b))
         else: 
             raise Exception("Only lognormal and hansen distributions available")        
         
@@ -365,7 +365,7 @@ class Parameterize():
                 mixingratio_df[i] = profile_fun(species[i])  
             else: #each molecule input manually
                 mixingratio_df[i] = species[i]['value']   
-                total_sum_of_gases += mixingratio_df[i].values
+            total_sum_of_gases += mixingratio_df[i].values
         #add background gas if it is requested
         if 'background' in species.keys():
             total_sum_of_background = 1-total_sum_of_gases

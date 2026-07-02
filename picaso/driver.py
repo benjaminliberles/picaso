@@ -1,30 +1,30 @@
 from .justdoit import *
 from .justplotit import *
 from .parameterizations import Parameterize,cloud_averaging
-from .retrieval import Parameterize_DEPRECATE
-#import picaso.justdoit as jdi
-#import picaso.justplotit as jpi
+
 import tomllib 
 import toml
 import shutil
-# import dynesty
 from collections.abc import Mapping
 from scipy import stats
 import dill
 import dynesty.utils
 from functools import partial
-# from mpi4py import MPI
 import sys
 from schwimmbad import MPIPool
 dynesty.utils.pickle_module = dill
 
-import os
-import numpy as np
-import pandas as pd
-import xarray as xr
-from astropy import units as u
+#all these come from justdoit
+#import os
+#import numpy as np
+#import pandas as pd
+#import xarray as xr
+#from astropy import units as u
+#import copy
 
 # import ultranest
+# from mpi4py import MPI
+# import dynesty
 
 
 chem_options = ['visscher', 'free', 'chemeq_on_the_fly','userfile']
@@ -63,7 +63,8 @@ def run(driver_file=None,driver_dict=None,return_class=False):
 
         # copy input toml into output folder for reproducibility
         output_file_name = config['InputOutput']['retrieval_output']+"/inputs.toml"
-        shutil.copy(driver_file, output_file_name)
+        if driver_file is not None and not config.get('retrieval', {}).get('sampler', {}).get('resume', False):
+            shutil.copy(driver_file, output_file_name)
 
         #run retrieval
         output = retrieve(config, param_tools)
@@ -327,6 +328,7 @@ def get_data_old(config):
     elif obs_type=='transmission':
         to_fit = 'transit_depth'
 
+    returns = {}
     for i,key in enumerate(observations):
         #load observation file
         dat = xr.load_dataset(observations[key])
@@ -353,8 +355,8 @@ def get_data_old(config):
         final = final.sort_values(by='wavenumber').reset_index(drop=True)
 
 	    #return a nice dictionary with the info we need 
-        returns = {key: [final['wavenumber'].values, 
-	             final['y'].values, final['e'].values]   }
+        returns[key] = [final['wavenumber'].values, 
+		             final['y'].values, final['e'].values]
         
     return returns
 
@@ -441,17 +443,17 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
         picaso_class = setup_spectrum_class(config, opacity=OPA, param_tools=param_tools)
         out = picaso_class.spectrum(OPA, full_output=True, calculation=config['observation_type'])
 
-        R_dict = config['object']['radius']
-        R = R_dict['value'] * u.Unit(R_dict['unit']).to(u.m)
-        d_dict = config['object']['distance']
-        d = d_dict['value'] * u.Unit(d_dict['unit']).to(u.m)
-
-        # TODO NEEDS TO BE MADE FLEX FOR ALL TYPES OF FITS
-        # resulty should be defined based on config['observation_type']
-        # currently i have made it so that data_parser always returns picaso units
-        # for flux but distance/radius scaling needs to be incorporated somewhere
         resultx = out['wavenumber']
-        resulty = 1e-8 * (R / d) ** 2 * out['thermal']
+        result_key = {'thermal': 'thermal',
+                      'reflected': 'albedo',
+                      'transmission': 'transit_depth'}[config['observation_type']]
+        resulty = out[result_key]
+        if config['observation_type'] == 'thermal':
+            R_dict = config['object']['radius']
+            R = R_dict['value'] * u.Unit(R_dict['unit']).to(u.m)
+            d_dict = config['object']['distance']
+            d = d_dict['value'] * u.Unit(d_dict['unit']).to(u.m)
+            resulty = 1e-8 * (R / d) ** 2 * resulty
 
         # Add RV
         if 'RV' in config:
@@ -461,14 +463,20 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
         if 'vrot' in config:
             resulty = vrot(config['vrot'], resultx, resulty)
 
-        # Convolve spectra
-        if 'convolve' in config:
-            pass
-
         # rebin to observed wavelengths
         for obs_key in DATA_DICT.keys():
             xdata, _, _ = DATA_DICT[obs_key]
-            _, rebinned = mean_regrid(resultx, resulty, newx=xdata)
+            conv = config.get('convolve')
+            if conv:
+                conv_cfg = conv.get(obs_key, conv) if isinstance(conv, dict) else {'R': conv}
+                R_conv = conv_cfg.get('R', conv_cfg.get('resolution')) if isinstance(conv_cfg, dict) else conv_cfg
+                if R_conv is None:
+                    raise ValueError("config['convolve'] must define 'R' or 'resolution'")
+                if np.isscalar(R_conv):
+                    R_conv = np.full_like(xdata, R_conv, dtype=float)
+                rebinned = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), 1e4/xdata)
+            else:
+                _, rebinned = mean_regrid(resultx, resulty, newx=xdata)
             y_model[obs_key].append(rebinned)
 
         if not retrieval:
@@ -521,23 +529,18 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools):
 
         for key in DATA_DICT.keys():
             xdata, ydata, edata = DATA_DICT[key]
-            y_model = y_model_dict[key][j]   # pick j-th sample
+            y_model = y_model_dict[key][j].copy()   # pick j-th sample
+            ydata_ = ydata
 
             # add offsets
-            if key in config.get("retrieval", {}).get("offset", {}):
+            if config['observation_type'] == 'transmission' and key in config.get("retrieval", {}).get("offset", {}):
                 icube = list(fitpars.keys()).index(f'offset.{key}')
-                offset = cube[j, icube]
-            else:
-                offset = 0
-            ydata_ = ydata + offset
+                y_model += cube[j, icube]
 
             # add scalings
-            if key in config.get("retrieval", {}).get("scaling", {}):
+            if config['observation_type'] == 'thermal' and key in config.get("retrieval", {}).get("scaling", {}):
                 icube = list(fitpars.keys()).index(f'scaling.{key}')
-                scaling = cube[j, icube]
-            else:
-                scaling = 1
-            ydata_ *= scaling
+                y_model *= cube[j, icube]
 
             # add error inflation if exists
             if key in config.get("retrieval", {}).get("err_inf", {}):
@@ -658,7 +661,7 @@ def RV(v_array, wvl, flux_array, edgeHandling='firstlast', fillValue=None):
         fv = np.nan if edgeHandling != "fillValue" else fillValue
 
         # Interpolate shifted flux back to original wavelength grid
-        nflux = sci.interp1d(wlprime, flux, bounds_error=False, fill_value=fv)(wvl)
+        nflux = interp1d(wlprime, flux, bounds_error=False, fill_value=fv)(wvl)
 
         if edgeHandling == "firstlast":
             nin = ~np.isnan(nflux)
@@ -722,16 +725,31 @@ def conv_non_uniform_R(model_flux, model_wl, R, obs_wl):
     
     return convolved_flux
 
+def _resume_check_config(config):
+    check = copy.deepcopy(config)
+    check.get('retrieval', {}).get('sampler', {}).pop('resume', None)
+    return check
+
 def retrieve(config, param_tools):
 
     OPA = opannection(
         filename_db=config['OpticalProperties']['opacity_file'], #database(s)
         method=config['OpticalProperties']['opacity_method'], #resampled, preweighted, resortrebin
-        wave_range=config['OpticalProperties']['wave_range'],#state wavelength range desired of spectrum
         **config['OpticalProperties']['opacity_kwargs'] #additonal inputs 
         )
     
     prior_config=config['retrieval']
+    checkpoint_file = config['InputOutput']['retrieval_output']+'/dynesty.save'
+    input_file = config['InputOutput']['retrieval_output']+'/inputs.toml'
+    if prior_config['sampler']['resume']:
+        if not os.path.exists(checkpoint_file):
+            raise FileNotFoundError(f"Cannot resume retrieval; checkpoint does not exist: {checkpoint_file}")
+        if not os.path.exists(input_file):
+            raise FileNotFoundError(f"Cannot verify resume config; original inputs file does not exist: {input_file}")
+        with open(input_file, "rb") as f:
+            saved_config = tomllib.load(f)
+        if _resume_check_config(config) != _resume_check_config(saved_config):
+            raise ValueError(f"Current config does not match original retrieval config in {input_file}")
     
     fitpars=prior_finder(prior_config)
     ndims=len(fitpars)
@@ -754,25 +772,23 @@ def retrieve(config, param_tools):
 
     #doing dynesty but this should be generic
     sampler_args = prior_config['sampler']['sampler_kwargs']
+    sampler_args.setdefault('queue_size', pool.size)
     run_args = prior_config['sampler']['run_kwargs']
     if prior_config['sampler']['resume']:
         print('Resuming retrieval...')
-        # sampler = dynesty.DynamicNestedSampler.restore(config['InputOutput']['retrieval_output']+'/dynesty.save')
-        sampler = dill.load(open (config|'InputOutput'|['retrieval_output']+'/sampler. pkl', 'rb'))
-        sampler.pool = pool
-        sampler.M = pool.map
-        sampler.nprocesses = pool. size
+        sampler = dynesty.NestedSampler.restore(checkpoint_file, pool=pool)
         resume=True
     else:
         # sampler = dynesty.DynamicNestedSampler(loglike_fn, hypercube_fn, ndims, pool=pool, **sampler_args)
         sampler = dynesty.NestedSampler(loglike_fn, hypercube_fn, ndims, pool=pool, **sampler_args) 
         resume=False
 
-    sampler.run_nested(checkpoint_file=config['InputOutput']['retrieval_output']+'/dynesty.save',
-                       resume=resume,
-                       **run_args)
-    dill.dump(sampler, open(config['InputOutput']['retrieval_output']+'/sampler.pkl', 'wb'))
-    pool.close()
+    try:
+        sampler.run_nested(checkpoint_file=checkpoint_file,
+                           resume=resume,
+                           **run_args)
+    finally:
+        pool.close()
     return sampler
 
 def check_model_samples(config, N=100, samples=None):
@@ -1146,5 +1162,3 @@ def plot_mr(picaso_output):
     full_output = picaso_output['full_output']
     fig = jpi.mixing_ratio(full_output, plot_type='bokeh', limit= 10) #limit controls the amount of outputs for the plot
     return fig
-
-
