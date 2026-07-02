@@ -479,6 +479,16 @@ def render_spectral_resolution():
 # RUN A SPECTRUM ----------------- #
 # ---------------------------------#
 def run_spectrum():
+    """
+    If users clicks run spectrum this will run the spectrum and create a figure that then 
+    can be passed 
+
+    Returns 
+    bokeh.Figure 
+        If users clicks run spectrum 
+    None 
+        If user does not click run spectrum 
+    """
     if config['calc_type'] =='spectrum' and st.button(f'Run {config['calc_type']}'):
         try:
 
@@ -496,10 +506,12 @@ def run_spectrum():
             spec_fig = jpi.spectrum(wavenumber, albedo_or_fluxes, plot_width=500, x_range=wavelength_range)
             # plot spectrum
             streamlit_bokeh(spec_fig, theme="streamlit", key="spectrum")
+            return spec_fig
         except Exception as e:
             st.warning('Make sure you have configured temperature, pressure, and chemistry before running a spectrum.')
             st.write(e)
         st.divider()
+    return None
 
 def render_free_parameter_selection():
     parameter_handler = {}
@@ -696,8 +708,17 @@ def render_additional_retrieval_parameters(parameter_dict):
     #adds other retrieval parameters: vsini, data offsets, error inflation
     return parameter_dict
 
-def render_retrievals():
+def render_retrievals(spectrum_figure=None):
+    """
+    Sets up the retrieval figure. 
 
+    If spectrum_figure is passed it can be used for the data configuration plot 
+
+    Parameters
+    ----------
+    spectrum_figure : bokeh.Figure 
+        Optional, will plot the spectrum created along with the data
+    """
     # Configure Data 
     st.subheader("Observational Data Configuration")
     default_paths = config.get('ObservationData', {}).get('filepaths', [])
@@ -729,12 +750,30 @@ def render_retrievals():
         config['ObservationData'][i]=edited_units[i].values[0]
 
     if st.button("Parse and Verify Data"):
+        #parses data and plots it to verify it is correct
         try:
             data_dict = go.parse_data(**config['ObservationData'])
             st.success(f"Successfully parsed {len(data_dict)} files: {list(data_dict.keys())}")
             for key, val in data_dict.items():
                 st.write(f"**{key}**: {len(val[0])} points, wavenumber range: {min(val[0]):.2f} - {max(val[0]):.2f}")
-            #fig = jpi.plot_errorbar(x,y,e,plot=None)
+            #fig = jpi.plot_errorbar(x,y,e,plot=spectrum_figure)
+            plot_options = st.selectbox(
+        "Plot", ['Data+reference spectrum','Data only'], index=None 
+        )
+            if plot_options =='Data+reference spectrum': 
+                basefig = spectrum_figure
+            elif plot_options =='Data only': 
+                basefig=None
+            if plot_options:
+                for i in data_dict.keys():
+                    x,y,e=data_dict[i]
+                    # TODO there might be an issue with distance/radius scaling 
+                    # if user is uploading data and comparing with a model. 
+                    # Need to match what is being done 
+                    # in modeling for 'thermal' 
+                    # or thermal spectrum figure could have R2/D2 scaling in it
+                    fig = jpi.plot_errorbar(x,y,e,plot=basefig)
+                streamlit_bokeh(fig)
         except Exception as e:
             st.error(f"Error parsing data: {e}")
 
@@ -846,12 +885,12 @@ if config['observation_type']:
     # SPECTRUM
     wavelength_range = render_wavelength_range(opacity)
     spectral_resolution = render_spectral_resolution()
-    run_spectrum()
+    spec_figure = run_spectrum()
         
     # RETRIEVALS
     retrieval_object = {}
     st.header("Retrievals")
     if st.selectbox("Do you want to do a retrieval?", ('Yes', 'No'), index=None) == 'Yes':
-        retrieval_object = render_retrievals()
+        retrieval_object = render_retrievals(spectrum_figure=spec_figure)
 
     render_download_config(retrieval_object)
