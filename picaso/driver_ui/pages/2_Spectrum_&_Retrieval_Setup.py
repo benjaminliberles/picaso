@@ -257,12 +257,16 @@ def render_admin():
 
     # CALCULATION TYPE AND OBSERVATION TYPE SETTING
     st.subheader('Select calculation to perform')
-    config['calc_type'] = st.selectbox("Calculation type", ['spectrum','climate'], index=None)
-    if config['calc_type'] == "spectrum":
-        config['observation_type'] = st.selectbox("Observation type", config['observation_type_options'], index=None)
-    elif config['calc_type'] != None:
-        st.warning(f'The {config['calc_type']} option has not been implemented yet.')
+    calc_type = config.get('calc_type','spectrum')
+
+    #config['calc_type'] = st.selectbox("Calculation type", ['spectrum','climate'], index=None)
+    if calc_type == "spectrum":
+        pass
+    elif calc_type == 'climate':
+        st.warning('Uploaded driver.toml has calc_type set to climate and should be used on the climate page for a climate run. Proceeding to generate spectrum for specified setup but might experience issues if full setup has not been provided. ')
+        #st.warning(f'The {config['calc_type']} option has not been implemented yet.')
     # TODO : This can be a select multi option 
+    config['observation_type'] = st.selectbox("Observation type", config['observation_type_options'], index=None)
     # E.g., "reflected+thermal" or "reflected+transmission"
     if config['observation_type']:
         st.divider()
