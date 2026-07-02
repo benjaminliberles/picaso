@@ -110,14 +110,15 @@ def write_results_to_config(grid, base):
             except:
                 base[item] = [str(ele) for ele in grid[item][0]]
         elif not isinstance(base[item], dict):
-            if isinstance(grid[item][0], np.int64):
-                base[item] = int(grid[item][0])
+            if isinstance(grid[item][0], (np.floating, np.integer)):
+                base[item] = grid[item][0].item()
             else:
                 base[item] = grid[item][0]
 
 def clean_dictionary(data, suffix="_options"):
     """
-    Recursively removes a certain keyword from any part of a dictionary (used to clean the driver.toml configuration of _options keywords before getting passed to a PICASO function)
+    Recursively removes a certain keyword from any part of a dictionary (used to clean the driver.toml configuration of _options keywords before getting passed to a PICASO function). 
+    Also converts numpy types to native python types for TOML serialization.
     
     Parameters
     ----------
@@ -137,6 +138,12 @@ def clean_dictionary(data, suffix="_options"):
         }
     if isinstance(data, list):
         return [clean_dictionary(v, suffix) for v in data]
+    
+    if isinstance(data, (np.floating, np.integer)):
+        return data.item()
+    if isinstance(data, np.ndarray):
+        return data.tolist()
+
     return data
 
 def run_spectrum_class(stage=None):
@@ -533,13 +540,11 @@ def render_free_parameter_selection():
 
             if isinstance(value, dict):
                 list_available_free_parameters(value, new_path)
-            elif isinstance(value, float):
+            elif isinstance(value, (float, np.floating)):
                 parameter_handler[new_path] = [st.checkbox(f"{new_path} {value}"), value]
-            elif isinstance(value, int) and not isinstance(value, bool) and key != 'nlevel':
+            elif isinstance(value, (int, np.integer)) and not isinstance(value, bool) and key != 'nlevel':
                 parameter_handler[new_path] = [st.checkbox(f"{new_path} {value}"), value]
-            elif isinstance(value, np.int64):
-                parameter_handler[new_path] = [st.checkbox(f"{new_path} {value}"), value]
-            elif isinstance(value, list) and all(isinstance(item, (int, float)) for item in value):
+            elif isinstance(value, list) and all(isinstance(item, (int, float, np.integer, np.floating)) for item in value):
                 for index, item in enumerate(value):
                     parameter_handler[new_path + f'.{index}'] = [st.checkbox(f"{new_path + f'.{index}'} {item}"), item]
     list_available_free_parameters(config)
