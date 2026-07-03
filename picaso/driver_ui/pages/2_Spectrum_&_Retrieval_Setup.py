@@ -504,13 +504,20 @@ def run_spectrum():
             wavenumber, albedo_or_fluxes = df['wavenumber'] , df[observation_key]
             wavenumber, albedo_or_fluxes = jdi.mean_regrid(wavenumber, albedo_or_fluxes, R=spectral_resolution)
             spec_fig = jpi.spectrum(wavenumber, albedo_or_fluxes, plot_width=500, x_range=wavelength_range)
-            # plot spectrum
-            streamlit_bokeh(spec_fig, theme="streamlit", key="spectrum")
-            return spec_fig
+            
+            # Persist in session state
+            st.session_state['spec_fig'] = spec_fig
+            st.session_state['spec_data'] = {'wavenumber': wavenumber, 'albedo_or_fluxes': albedo_or_fluxes}
         except Exception as e:
             st.warning('Make sure you have configured temperature, pressure, and chemistry before running a spectrum.')
             st.write(e)
         st.divider()
+    
+    if 'spec_fig' in st.session_state:
+        # plot spectrum
+        streamlit_bokeh(st.session_state['spec_fig'], theme="streamlit", key="spectrum")
+        return st.session_state['spec_fig']
+
     return None
 
 def render_free_parameter_selection():
@@ -532,7 +539,6 @@ def render_free_parameter_selection():
             'cloud1_type': config['clouds']['cloud1_type']
         }
     del config['retrieval']
-    del config['sampler']
 
     def list_available_free_parameters(data, current_path=""):
         for key, value in data.items():
@@ -588,6 +594,8 @@ def sampler(prior_set_items, nsamples):
         GUESS_TOML = copy.deepcopy(config)
         # write sampled values to config
         for index, free_parameter in enumerate(prior_set_items.keys()):
+            if any(free_parameter.startswith(s) for s in ['err_inf', 'offset', 'scaling']):
+                continue
             sampled_value = check_all_values[index]
             keys = free_parameter.split('.')
             update_toml_with_a_value_for_a_free_parameter(GUESS_TOML, keys, sampled_value)
@@ -696,8 +704,18 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
         spectrum_fig = jpi.spectrum(WNO_LIST, ALB_LIST, palette=[(255,0,0,0.3)], plot_width=500,x_range=wavelength_range)
     return pressure_temperature_fig, mixing_ratio_bokeh_fig, clouds_fig, spectrum_fig
 
-def render_additional_retrieval_parameters(parameter_dict):
+def render_additional_retrieval_parameters(parameter_dict, config):
     #adds other retrieval parameters: vsini, data offsets, error inflation
+    st.subheader("Data Systematics")
+    for f in config['ObservationData']['filenames']:
+        name = os.path.splitext(os.path.basename(f))[0]
+        with st.expander(f"Systematics for {name}"):
+            if st.checkbox(f"Add error inflation term", key=f"err_inf_{name}"):
+                parameter_dict[f'err_inf.{name}'] = [True, 0.0]
+            if st.checkbox(f"Add instrumental offset", key=f"offset_{name}"):
+                parameter_dict[f'offset.{name}'] = [True, 0.0]
+            if st.checkbox(f"Add scaling term", key=f"scaling_{name}"):
+                parameter_dict[f'scaling.{name}'] = [True, 1.0]
     return parameter_dict
 
 def render_retrievals(spectrum_figure=None):
@@ -741,39 +759,54 @@ def render_retrievals(spectrum_figure=None):
     for i in edited_units.keys(): 
         config['ObservationData'][i]=edited_units[i].values[0]
 
-    if st.button("Parse and Verify Data"):
+    if spectrum_figure is not None:
+        col1, col2 = st.columns(2)
+        with col1:
+            plot_only_data = st.button("Data check and Plot only")
+        with col2:
+            plot_with_ref = st.button("Data check and Plot w/ ref model")
+    else:
+        plot_only_data = st.button("Plot data")
+        plot_with_ref = False
+
+    if plot_with_ref or plot_only_data:
         #parses data and plots it to verify it is correct
         try:
             data_dict = go.parse_data(**config['ObservationData'])
             st.success(f"Successfully parsed {len(data_dict)} files: {list(data_dict.keys())}")
             for key, val in data_dict.items():
                 st.write(f"**{key}**: {len(val[0])} points, wavenumber range: {min(val[0]):.2f} - {max(val[0]):.2f}")
-            #fig = jpi.plot_errorbar(x,y,e,plot=spectrum_figure)
-            plot_options = st.selectbox(
-        "Plot", ['Data+reference spectrum','Data only'], index=None 
-        )
-            if plot_options =='Data+reference spectrum': 
-                basefig = spectrum_figure
-            elif plot_options =='Data only': 
-                basefig=None
-            if plot_options:
-                for i in data_dict.keys():
-                    x,y,e=data_dict[i]
-                    # TODO there might be an issue with distance/radius scaling 
-                    # if user is uploading data and comparing with a model. 
-                    # Need to match what is being done 
-                    # in modeling for 'thermal' 
-                    # or thermal spectrum figure could have R2/D2 scaling in it
-                    fig = jpi.plot_errorbar(x,y,e,plot=basefig)
-                streamlit_bokeh(fig)
+            
+            if plot_with_ref and 'spec_data' in st.session_state:
+                spec_data = st.session_state['spec_data']
+                # Recreate to avoid cumulative mutation of the persisted figure
+                basefig = jpi.spectrum(spec_data['wavenumber'], spec_data['albedo_or_fluxes'], 
+                                       plot_width=500, x_range=wavelength_range)
+            else:
+                basefig = None
+            
+            fig = basefig
+            for i in data_dict.keys():
+                x,y,e=data_dict[i]
+                # TODO there might be an issue with distance/radius scaling 
+                # if user is uploading data and comparing with a model. 
+                # Need to match what is being done 
+                # in modeling for 'thermal' 
+                # or thermal spectrum figure could have R2/D2 scaling in it
+                fig = jpi.plot_errorbar(1e4/x,y,e,plot=fig)
+            
+            st.session_state['data_plot'] = fig
         except Exception as e:
             st.error(f"Error parsing data: {e}")
 
-
-    # LIST OUT ALL FREE PARAMETERS
-    parameter_handler = render_free_parameter_selection()
+    if 'data_plot' in st.session_state:
+        streamlit_bokeh(st.session_state['data_plot'], key="data_verification_plot")
 
     # ADD Additional retrieval parameters?
+    parameter_handler = render_additional_retrieval_parameters({}, config)
+
+    # LIST OUT ALL FREE PARAMETERS
+    parameter_handler.update(render_free_parameter_selection())
 
     prior_set_items = {}
     retrieval_stage_state_manager = {} # for streamlit rendering organization
@@ -799,9 +832,8 @@ def render_retrievals(spectrum_figure=None):
         retrieval_variables = {
             'prior' : prior_type,
             'log' : base['log'],
+            f'{prior_type}_kwargs' : base[f'{prior_type}_kwargs']
         }
-        for kwarg in base[f'{prior_type}_kwargs'].keys():
-            retrieval_variables[kwarg] = base[f'{prior_type}_kwargs'][kwarg]
 
         prev = retrieval_object
         for i, key in enumerate(parameter.split('.')):

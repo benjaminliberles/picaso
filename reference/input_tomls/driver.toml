@@ -223,6 +223,19 @@ patch1 = 'clear'
 patch2 = 'cloud1'
 frac_1 = 0.3 #this is the fraction assigned to patch 1
 
+[doppler_shift]
+doppler_v = 0 # Doppler velocities in km/s for each spectrum.
+edgeHandling = 'firstlast' 
+edgeHandling_options = ['firstlast' , 'fillValue']
+fillValue = 'None'
+
+[rotational_broadening]
+rotational_v = 0 # Projected rotational velocities (km/s)
+eps = 0.6 #linb darkening coefficient 
+nr = 10 #number of radial bins 
+ntheta = 100 # azimuthal bins in outer annulus 
+dif = 0 # differential rotation coefficient 
+
 [retrieval]
 
 [retrieval.object.radius]
@@ -247,11 +260,23 @@ min=0.005
 max=2
 log=true
 
-
-[retrieval.errinf]
+[retrieval.err_inf]
+[retrieval.err_inf.filename_example] #errinf terms are recognized by the associated filename. e.g., filename filename_example.csv would be entered here as example
 prior="uniform"
 uniform_kwargs={min=0.005, max=2}
 log=true
+
+[retrieval.scaling]
+[retrieval.scaling.filename_example] #scaling terms are recognized by the associated filename. e.g., filename filename_example.csv would be entered here as example
+prior="uniform"
+uniform_kwargs={min=0.005, max=2}
+log=true
+
+[retrieval.offsets]
+[retrieval.offsets.filename_example] #offsets terms are recognized by the associated filename. e.g., filename filename_example.csv would be entered here as example
+prior="uniform"
+uniform_kwargs={min=-1, max=1}
+log=false
 
 [retrieval.sampler]
 code='dynesty'#options: ultranest, emcee, pymultinest, dynesty
