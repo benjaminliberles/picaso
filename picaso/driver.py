@@ -8,6 +8,7 @@ import toml
 import shutil
 from collections.abc import Mapping
 from scipy import stats
+import scipy.interpolate as sci
 import dill
 import dynesty
 import dynesty.utils
@@ -442,6 +443,21 @@ def hypercube(u, fitpars):
             x[i]=10**x[i]  
     return x
 
+def _velocity_config(config, key):
+    value = config.get('object', {}).get(key, None)
+    if value is None:
+        value = config.get(key, None)
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        if 'value' in value:
+            unit = value.get('unit', 'km/s')
+            kwargs = {k: v for k, v in value.items() if k not in ('value', 'unit')}
+            kwargs['v_array'] = value['value'] * u.Unit(unit).to(u.km / u.s)
+            return kwargs
+        return dict(value)
+    return {'v_array': value}
+
 def process_model(resultx, resulty, data_dict=None, conv_dict=None, config=None, regrid_R=None):
     """
     Processes model output by applying distance scaling, Doppler shift (RV), 
@@ -482,11 +498,11 @@ def process_model(resultx, resulty, data_dict=None, conv_dict=None, config=None,
 
     resulty = distance_scaling * resulty
 
-    RV_config = config.get('RV')
+    RV_config = _velocity_config(config, 'RV')
     if RV_config:
         resulty = RV(resultx, resulty, **RV_config)
 
-    vrot_config = config.get('vrot')
+    vrot_config = _velocity_config(config, 'vrot')
     if vrot_config:
         resulty = vrot(resultx, resulty, **vrot_config)
 

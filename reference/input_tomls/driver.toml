@@ -29,6 +29,8 @@ gravity   = {value=1e5, unit='cm/s**2'}
 distance  = {value=8.3,  unit='parsec'}
 teff      = {value=540, unit='Kelvin'}
 teq       = {value=500, unit='Kelvin'}
+# RV       = {value=0, unit='km/s'}
+# vrot     = {value=0, unit='km/s'}
 
 [geometry]
 phase = {value=0, unit='radian'} #planet phase angle
@@ -250,6 +252,16 @@ prior="uniform"
 uniform_kwargs={min=0.5, max=2}
 gaussian_kwargs={mean=1, std=0.5}
 log=false
+
+#[retrieval.object.RV]
+#prior="uniform"
+#uniform_kwargs={min=-100, max=100}
+#log=false
+
+#[retrieval.object.vrot]
+#prior="uniform"
+#uniform_kwargs={min=0, max=100}
+#log=false
 
 [retrieval.chemistry.free.H2O.vmr_switch]
 prior='uniform'
