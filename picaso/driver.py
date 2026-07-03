@@ -470,8 +470,12 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
             R = R_dict['value'] * u.Unit(R_dict['unit']).to(u.m)
             d_dict = config['object']['distance']
             d = d_dict['value'] * u.Unit(d_dict['unit']).to(u.m)
+            #TODO this 1e-8 is not needed with the new data parser unit handling
+            #leaving now to make sure Fran can test with his framework
             resulty = 1e-8 * (R / d) ** 2 * resulty
 
+        #TODO these dont map directly to the fucntion inputs 
+        #so currently they appear to be broken and not usable 
         # Add RV
         if 'RV' in config:
             resulty = RV(config['RV'], resultx, resulty)

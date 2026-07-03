@@ -192,14 +192,56 @@ def uploaded_config_is_valid(uploaded_config):
         
     Parameters
     ----------
-    dict : dict
+    uploaded_config : dict
         uploaded user config TOML
     Return
     -------
     bool
         True if valid
     """
-    return uploaded_config is not None
+    if uploaded_config is None:
+        return False
+
+    required_structure = {
+        'observation_type': None,
+        'observation_type_options': None,
+        'irradiated': None,
+        'calc_type': None,
+        'OpticalProperties': ['opacity_file', 'opacity_method', 'opacity_kwargs', 'virga_mieff'],
+        'star': ['type_options'],
+        'object': None,
+        'temperature': ['pressure', 'profile'],
+        'chemistry': ['method'],
+        'geometry': ['phase'],
+    }
+
+    is_valid = True
+
+    for key, subkeys in required_structure.items():
+        if key not in uploaded_config:
+            st.error(f"Missing required top-level key: '{key}'")
+            is_valid = False
+        elif subkeys:
+            if not isinstance(uploaded_config[key], dict):
+                st.error(f"Section '{key}' must be a table (dictionary)")
+                is_valid = False
+                continue
+            for subkey in subkeys:
+                if subkey not in uploaded_config[key]:
+                    st.error(f"Missing required key '{subkey}' in '{key}' section")
+                    is_valid = False
+    
+    # Check if ObservationData exists if it's used
+    if 'ObservationData' in uploaded_config:
+        if not isinstance(uploaded_config['ObservationData'], dict):
+             st.error("Section 'ObservationData' must be a table (dictionary)")
+             is_valid = False
+    else:
+        # Based on driver.toml, it should probably be there
+        st.warning("Missing 'ObservationData' section. Please ensure it is provided in your configuration.")
+        is_valid = False
+
+    return is_valid
 
 # ===============================
 # STREAMLIT HELPER FUNCTIONS 
@@ -230,7 +272,6 @@ def setup_config():
         uploaded_file = st.file_uploader("Choose a TOML config file", type="toml")
         if uploaded_file is not None:
             uploaded_config = tomllib.load(uploaded_file)
-            # TODO update validator to check that TOML is in correct format (has _options, has necessary sections, etc.)
             if uploaded_config_is_valid(uploaded_config):
                 return uploaded_config
     else:
@@ -254,8 +295,8 @@ def render_admin():
         method=config['OpticalProperties']['opacity_method'], #resampled, preweighted, resortrebin
         **config['OpticalProperties']['opacity_kwargs'] #additonal inputs 
     )
-    # TODO turn below into input: go.find_values_for_key(config ,'condensate')
-    # TODO once the jdi.vj.available() is updated, below pops can be removed
+
+    # for later, once the jdi.vj.available() is updated, below pops can be removed
     a =jdi.vj.available()
     a.pop(a.index('CaAl12O19'))
     a.pop(a.index('CaTiO3'))
@@ -271,8 +312,8 @@ def render_admin():
         pass
     elif calc_type == 'climate':
         st.warning('Uploaded driver.toml has calc_type set to climate and should be used on the climate page for a climate run. Proceeding to generate spectrum for specified setup but might experience issues if full setup has not been provided. ')
-        #st.warning(f'The {config['calc_type']} option has not been implemented yet.')
-    # TODO : This can be a select multi option 
+
+    # TODO : This can eventually be a select multi option 
     config['observation_type'] = st.selectbox("Observation type", config['observation_type_options'], index=None)
     # E.g., "reflected+thermal" or "reflected+transmission"
     if config['observation_type']:
@@ -682,7 +723,6 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
     legend.click_policy="mute"
     mixing_ratio_bokeh_fig.add_layout(legend, 'left')
     mixing_ratio_bokeh_fig.y_range.flipped = True
-    # TODO: nice to make units accurate to what in driver.toml
     axes.set_xlabel("Temperature (K)") 
     axes.set_ylabel("Log Pressure(Bars)")
     axes.set_title(f"Pressure-Temperature Profiles ({nsamples} Samples)")
@@ -818,7 +858,7 @@ def render_retrievals(spectrum_figure=None):
     st.divider()
 
     st.subheader("Set and test your prior bounds")
-    st.text('Now that you have set your ')
+    st.text('Now that you have set prior ranges you can use the functionality below to test the prior. Below you can run X-number of samples through the prior ranges and visualize chemistry, p-t profiles, and spectra.')
 
     ALL_TOMLS = []
     save_all_class_pt = []
