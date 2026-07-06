@@ -381,6 +381,126 @@ def render_pressure_and_temperature():
 # ============================================
 # INPUT CHEMISTRY INFORMATION
 # ============================================
+def render_free_chem_options():
+    """
+    Renders the UI for free chemistry options. 
+
+    At the moment quite hard coded for the current options. This will not 
+    work freely if major input changes happen to the free chemistry specification. 
+    """
+    st.subheader("Free Chemistry Configuration")
+    
+    # 1) Select molecules
+    possible_cont=[]
+    continuum_sources = ['H2','He','H','H2-','H-']
+    for icont in list(opacity.avail_continuum): #e.g., H2H2, H2He H-ff etc 
+        for ispe in continuum_sources:
+            if ispe in icont: possible_cont+=[ispe]
+    all_mols = list(set(list(opacity.molecules) + possible_cont))
+    # Get current molecules from config by checking against all_mols
+    current_mols = [k for k in config['chemistry']['free'].keys() if k in all_mols]
+    
+    
+    selected_mols = st.multiselect("Select molecules for chemistry", all_mols, default=current_mols)
+    
+    
+
+    profile_options_dict = config['chemistry']['free']['profile_options']
+    
+    # Remove molecules that are no longer selected
+    for mol in list(config['chemistry']['free'].keys()):
+        if mol not in selected_mols and mol not in ['background', 'method','species']:
+            if 'options' not in mol: del config['chemistry']['free'][mol]
+
+    # 2) Render subheaders and options for each molecule
+    num_background = 0 
+    background_config = dict(gases=[])
+    for mol in selected_mols:
+        st.subheader(mol)
+        if mol not in config['chemistry']['free']:
+            config['chemistry']['free'][mol] = {'profile': 'constant', 'unit': 'v/v'}
+        
+        mol_config = config['chemistry']['free'][mol]
+        
+        # Ensure profile exists
+        if 'profile' not in mol_config:
+            mol_config['profile'] = 'constant'
+            
+        selected_profile = st.selectbox(
+            f"Select profile type for {mol}", 
+            list(profile_options_dict.keys()), 
+            index=list(profile_options_dict.keys()).index(mol_config['profile']),
+            key=f"profile_{mol}"
+        )
+        mol_config['profile'] = selected_profile
+        
+        if 'background' in selected_profile: 
+            num_background += 1 
+            background_config['gases']+=[mol]
+            if num_background>2: st.error('Only can support up to two background gases')
+        else: 
+            # 3) Render inputs based on profile_options
+            for param in profile_options_dict[selected_profile]:
+                if param == 'interpolation_method':
+                    mol_config[param] = st.text_input(
+                        f"{param} for {mol}", 
+                        value=mol_config.get(param, 'slinear'),
+                        key=f"{param}_{mol}"
+                    )
+                elif param in ['P_knots', 'vmr_knots']:
+                    # Handle list inputs as comma-separated strings
+                    current_val = mol_config.get(param, [])
+                    if isinstance(current_val, list):
+                        current_val_str = ", ".join([str(v) for v in current_val])
+                    else:
+                        current_val_str = str(current_val)
+                        
+                    input_str = st.text_input(
+                        f"{param} for {mol} (comma separated)", 
+                        value=current_val_str,
+                        key=f"{param}_{mol}"
+                    )
+                    try:
+                        mol_config[param] = [float(x.strip()) for x in input_str.split(',') if x.strip()]
+                    except ValueError:
+                        st.error(f"Error parsing {param} for {mol}. Please enter numeric values separated by commas.")
+                
+                else:
+                    # Numeric inputs
+                    mol_config[param] = st.number_input(
+                        f"{param} for {mol}", 
+                        value=float(mol_config.get(param, 0.0)),
+                        format="%.2e",
+                        key=f"{param}_{mol}"
+                    )
+    
+    # 5) Incorporate background gas logic
+    if num_background>1:
+        st.subheader("Background Gas Fraction")
+        mol1 = background_config['gases'][0]
+        mol2 = background_config['gases'][1]
+        fraction = st.number_input(
+            rf'Fraction between {mol1}:{mol2}', 
+            value=float(background_config.get('fraction', 5.667)),
+            key="bg_fraction"
+        )
+        background_config['fraction'] = fraction
+        config['chemistry']['free']['background'] = background_config
+    elif num_background == 1: 
+        if 'fraction' in config['chemistry']['free']['background']: del config['chemistry']['free']['background']['fraction']
+    elif num_background == 0:
+        if 'background' in config['chemistry']['free']:
+            del config['chemistry']['free']['background']
+
+
+    if 'gases' in background_config: 
+        for i in background_config['gases']: 
+            selected_mols.pop(selected_mols.index(i))
+            if i in config['chemistry']['free']: del config['chemistry']['free'][i]
+    
+    config['chemistry']['free']['species']=selected_mols
+
+
 def render_chemistry():
     # SET CHEMISTRY METHOD
     chemistry_options = [option for option in config['chemistry'] if option != 'method']
@@ -391,53 +511,7 @@ def render_chemistry():
     if chem_method:
         # RENDER FREE CHEMISTRY 
         if 'free' in chem_method:
-            # TODO : This could be cleaned up if driver.py / drover.toml was simplified somehow (long term)
-
-            # FREE CHEM: FORMAT EDITOR BOX
-            molecules = [mole for mole in config['chemistry'][chem_method] if mole != 'background']
-            mole_unit = config['chemistry'][chem_method][molecules[0]]['unit']
-            molecule_values = []
-            for mole in molecules:
-                if 'values' in config['chemistry'][chem_method][mole]:
-                    molecule_values.append([str(ele) for ele in config['chemistry'][chem_method][mole]['values']])
-                elif 'value' in config['chemistry'][chem_method][mole] and '[' in str(config['chemistry'][chem_method][mole]['value']):
-                    molecule_values.append([str(ele) for ele in config['chemistry'][chem_method][mole]['value']])
-                elif 'value' in config['chemistry'][chem_method][mole]:
-                    molecule_values.append([str(config['chemistry'][chem_method][mole]['value'])])
-            chem_free_df = pd.DataFrame({
-                f'Molecule ({mole_unit})': molecules,
-                'Values': molecule_values,
-                'Pressures (bar)': [[str(ele) for ele in config['chemistry'][chem_method][mole].get('pressures', '')] for mole in molecules],
-            })
-            st.info('Molecule names are case sensitive (ex: TiO, H2O). You only need to specify a pressure if you provide multiple values for a molecule (to indicate what altitude the amount of the molecule changes). Only correctly filled out rows will be included in the plot.')
-            chem_free_grid = st.data_editor(chem_free_df, num_rows="dynamic")
-            
-            # FREE CHEM: WRITE RESULTS TO A DATAFRAME
-            for i,mole in enumerate(chem_free_grid[f'Molecule ({mole_unit})']):
-                if mole != None and chem_free_grid['Values'][i] != None and (len(chem_free_grid['Values'][i]) == 1 or chem_free_grid['Pressures (bar)'][i] != None):
-                    if mole not in config['chemistry'][chem_method]:
-                        config['chemistry'][chem_method][mole] = {'values': [], 'unit': 'v/v', 'pressures': [], 'pressure_unit': 'bar'}
-                    values = [float(value) for value in chem_free_grid['Values'][i]]
-                    if len(values) == 1:
-                        # don't need a pressure point if there's only one value
-                        config['chemistry'][chem_method][mole]['value'] = values[0]
-                    else:
-                        # TODO: add warning to make sure there's the right # of pressures per values specified
-                        config['chemistry'][chem_method][mole]['values'] = values
-                        config['chemistry'][chem_method][mole]['pressures'] = [float(pressure) for pressure in chem_free_grid['Pressures (bar)'][i]]
-            # FREE CHEM: CONFIGURE BACKGROUND GAS
-            num_background_gases = st.selectbox("0, 1, or 2 Background Gases?", ('0', '1', '2'), index=None)
-            if num_background_gases == '1':
-                config['chemistry']['free']['background']['gases']= [st.text_input('Background gas')]
-                del config['chemistry']['free']['background']['fraction']
-            elif num_background_gases == '2':
-                background_gas1 = st.text_input('Background gas 1')
-                background_gas2 = st.text_input('Background gas 2')
-                config['chemistry']['free']['background']['gases'] = [background_gas1, background_gas2]
-                fraction = st.number_input('Fraction between them')
-                config['chemistry']['free']['background']['fraction'] = fraction
-            elif num_background_gases == '0':
-                del config['chemistry']['free']['background']
+            render_free_chem_options()
         else:
             # EDITABLE SECTION FOR OTHER CHEMISTRY METHODS
             editable_section(config['chemistry'][f'{config['chemistry']['method']}'], 'chemistry')
