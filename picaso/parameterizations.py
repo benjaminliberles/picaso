@@ -194,7 +194,7 @@ class Parameterize():
             opd_profile = self.deck_decay(**deck_kwargs)
         
         df = picaso_format(opd, w0, g0, wavenumber_grid, self.pressure_layer, opd_profile=opd_profile)
-
+        df = df.astype(float)
         return df 
     
     def cloud_brewster_grey(self, decay_type, alpha, ssa, reference_wave=1,

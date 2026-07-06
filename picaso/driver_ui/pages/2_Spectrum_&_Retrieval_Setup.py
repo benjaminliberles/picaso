@@ -539,46 +539,96 @@ def render_chemistry():
 def render_clouds():
     include_clouds = st.selectbox("Do you want clouds?", ('Yes', 'No'), index=None)
     if include_clouds == 'Yes':
-        cloud_id = 'cloud1'
-        cloud_obj = config['clouds'][cloud_id]
+        num_clouds = st.number_input("How many cloud types?", min_value=1, value=1)
+        
+        # Cleanup extra clouds from config if num_clouds decreased
+        all_cloud_keys = [k for k in config['clouds'].keys() if k.startswith('cloud')]
+        for k in all_cloud_keys:
+            try:
+                if k.startswith('cloud') and not k.endswith('_type'):
+                    idx = int(k.replace('cloud', ''))
+                    if idx > num_clouds:
+                        del config['clouds'][k]
+                        if f'{k}_type' in config['clouds']:
+                            del config['clouds'][f'{k}_type']
+            except ValueError:
+                pass
 
-        # set cloud type
-        cloud_type = st.selectbox("Cloud type", cloud_obj.keys())
-        config['clouds'][f'{cloud_id}_type'] = cloud_type
+        for i in range(1, int(num_clouds) + 1):
+            cloud_id = f'cloud{i}'
+            st.subheader(f"Cloud {i} Configuration")
+            
+            if cloud_id not in config['clouds']:
+                config['clouds'][cloud_id] = copy.deepcopy(config['clouds']['cloud1'])
+            
+            cloud_obj = config['clouds'][cloud_id]
 
-        # create editable df for cloud so users can set parameters
-        cloud_type_df = pd.DataFrame([format_config_section_for_df(cloud_obj[cloud_type])])
-        cloud_type_editable_df = st.data_editor(cloud_type_df)
-        # render any options sections dynamically
-        cloud_list_iterate = copy.deepcopy(config['clouds'][cloud_id][cloud_type])
-        for attr in cloud_list_iterate:
-            if attr.endswith('_options'):
-                pure_attr = '_'.join(attr.split('_')[:-1])
-                cloud_obj[cloud_type][pure_attr] = st.selectbox(f"{cloud_id} {pure_attr.capitalize()} Options", cloud_obj[cloud_type][attr], index=None)
+            # set cloud type
+            current_type = config['clouds'].get(f'{cloud_id}_type')
+            type_options = list(cloud_obj.keys())
+            try:
+                type_index = type_options.index(current_type) if current_type in type_options else 0
+            except ValueError:
+                type_index = 0
                 
-                # render any kwargs for the options dynamically
-                if cloud_obj[cloud_type][pure_attr]:
-                    var_with_options = cloud_obj[cloud_type][pure_attr]
-                    kwargs_for_attribute_option_exist = cloud_obj[cloud_type][pure_attr]+'_kwargs' in cloud_obj[cloud_type]
-                    if kwargs_for_attribute_option_exist:
-                        options_editable_df = st.data_editor(cloud_obj[cloud_type][ cloud_obj[cloud_type][pure_attr]+'_kwargs' ])
-                        cloud_obj[cloud_type][ cloud_obj[cloud_type][pure_attr]+'_kwargs' ] = options_editable_df
+            cloud_type = st.selectbox(f"Cloud type for {cloud_id}", type_options, index=type_index, key=f"{cloud_id}_type_select")
+            config['clouds'][f'{cloud_id}_type'] = cloud_type
 
-        write_results_to_config(cloud_type_editable_df, config['clouds']['cloud1'][cloud_type])
+            # create editable df for cloud so users can set parameters
+            cloud_type_df = pd.DataFrame([format_config_section_for_df(cloud_obj[cloud_type])])
+            cloud_type_editable_df = st.data_editor(cloud_type_df, key=f"{cloud_id}_{cloud_type}_editor")
+            
+            # render any options sections dynamically
+            cloud_list_iterate = copy.deepcopy(config['clouds'][cloud_id][cloud_type])
+            for attr in cloud_list_iterate:
+                if attr.endswith('_options'):
+                    pure_attr = '_'.join(attr.split('_')[:-1])
+                    
+                    current_opt = cloud_obj[cloud_type].get(pure_attr)
+                    options = cloud_obj[cloud_type][attr]
+                    try:
+                        opt_index = options.index(current_opt) if current_opt in options else 0
+                    except ValueError:
+                        opt_index = 0
+
+                    cloud_obj[cloud_type][pure_attr] = st.selectbox(
+                        f"{cloud_id} {pure_attr.capitalize()} Options", 
+                        options, 
+                        index=opt_index,
+                        key=f"{cloud_id}_{cloud_type}_{pure_attr}_select"
+                    )
+                    
+                    # render any kwargs for the options dynamically
+                    if cloud_obj[cloud_type][pure_attr]:
+                        var_with_options = cloud_obj[cloud_type][pure_attr]
+                        kwargs_key = var_with_options + '_kwargs'
+                        if kwargs_key in cloud_obj[cloud_type]:
+                            editable_section(cloud_obj[cloud_type][kwargs_key],key=f"{cloud_id}_{cloud_type}_{kwargs_key}_editor")
+                            #options_editable_df = st.data_editor(
+                            #    cloud_obj[cloud_type][kwargs_key],
+                            #    key=f"{cloud_id}_{cloud_type}_{kwargs_key}_editor"
+                            #)
+                            #cloud_obj[cloud_type][kwargs_key] = options_editable_df
+
+            write_results_to_config(cloud_type_editable_df, config['clouds'][cloud_id][cloud_type])
+        
         ##########################
         # GRAPH CLOUDS
         ##########################
         if st.button('See Clouds'):
             try:
                 data_class = run_spectrum_class()
-                df = data_class.inputs['clouds']['profile'].astype('float')
-                wavenumber = df['wavenumber'].unique()
-                nwno = len(wavenumber)
-                wavelength = 1e4/wavenumber
-                pressure = df['pressure'].unique()
-                nlayer = len(pressure)
-                bokeh_plot = jpi.plot_cld_input(nwno, nlayer, df=df,pressure=pressure, wavelength=wavelength)
-                st.write(bokeh_plot)
+                if 'clouds' in data_class.inputs and 'profile' in data_class.inputs['clouds']:
+                    df = data_class.inputs['clouds']['profile'].astype('float')
+                    wavenumber = df['wavenumber'].unique()
+                    nwno = len(wavenumber)
+                    wavelength = 1e4/wavenumber
+                    pressure = df['pressure'].unique()
+                    nlayer = len(pressure)
+                    bokeh_plot = jpi.plot_cld_input(nwno, nlayer, df=df,pressure=pressure, wavelength=wavelength)
+                    st.write(bokeh_plot)
+                else:
+                    st.warning("No cloud profile generated. Please check cloud configuration.")
             except Exception as e:
                 st.warning('Make sure you have configured chemistry and temperature.')
                 st.write(e)
@@ -708,10 +758,14 @@ def render_free_parameter_selection():
         'method': config['chemistry']['method']
     }
     if 'clouds' in config:
-        config['clouds'] = {
-            'cloud1':{config['clouds']['cloud1_type']: config['clouds']['cloud1'][config['clouds']['cloud1_type']]},
-            'cloud1_type': config['clouds']['cloud1_type']
-        }
+        new_clouds = {}
+        for k in config['clouds'].keys():
+            if k.endswith('_type'):
+                cloud_id = k.replace('_type', '')
+                cloud_type = config['clouds'][k]
+                new_clouds[k] = cloud_type
+                new_clouds[cloud_id] = {cloud_type: config['clouds'][cloud_id][cloud_type]}
+        config['clouds'] = new_clouds
     del config['retrieval']
 
     def list_available_free_parameters(data, current_path=""):
