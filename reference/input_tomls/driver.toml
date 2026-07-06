@@ -225,9 +225,9 @@ frac_1 = 0.3 #this is the fraction assigned to patch 1
 
 [doppler_shift]
 doppler_v = 0 # Doppler velocities in km/s for each spectrum.
-edgeHandling = 'firstlast' 
-edgeHandling_options = ['firstlast' , 'fillValue']
-fillValue = 'None'
+#edgeHandling = 'firstlast' #can we force these to be defaults and not include them in the toml? How often will we actually change this
+#edgeHandling_options = ['firstlast' , 'fillValue']
+#fillValue = 'None'
 
 [rotational_broadening]
 rotational_v = 0 # Projected rotational velocities (km/s)

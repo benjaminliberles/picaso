@@ -512,6 +512,22 @@ def render_clouds():
         if 'clouds' in config:
             del config['clouds']
 
+def render_velocities():
+    st.subheader("Doppler and Rotational Velocities (Optional)")
+    include_doppler= st.selectbox("Do you want to add a doppler shift?", ('Yes', 'No'), index=None)
+    if include_doppler == 'Yes':
+        editable_section(config['doppler_shift'], 'doppler_shift')
+    else: 
+        if 'doppler_shift' in config: 
+            del config['doppler_shift']
+    
+    include_rotation= st.selectbox("Do you want to add rotational broadening?", ('Yes', 'No'), index=None)
+    if include_rotation == 'Yes':
+        editable_section(config['rotational_broadening'], 'rotational_broadening')
+    else: 
+        if 'rotational_broadening' in config: 
+            del config['rotational_broadening']
+        
 def render_wavelength_range(opacity):
     return st.slider(
         "Select wavelength range (μm)",
@@ -777,9 +793,16 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
         WNO_LIST = []
         ALB_LIST = []
         for prior_toml in ALL_TOMLS:
-            df = go.run(driver_dict=clean_dictionary(prior_toml))
+            clean_dict = clean_dictionary(prior_toml)
+            df = go.run(driver_dict=clean_dict)
             obs_key = prior_toml['observation_type']
             wno, alb = df['wavenumber'] , df[obs_key]
+            if 'RV' in clean_dict:
+                alb = go.RV(wno, alb, **clean_dict['RV'])
+            # Add vsini
+            if 'vrot' in clean_dict:
+                alb = go.vrot(wno, alb, **clean_dict['vrot'])
+
             wno, alb = jdi.mean_regrid(wno, alb, R=spectral_resolution)
             WNO_LIST.append(wno)
             ALB_LIST.append(alb)
@@ -988,6 +1011,9 @@ if config['observation_type']:
     render_pressure_and_temperature()
     render_chemistry()
     render_clouds()
+
+    #VELOCITIES (doppler and/or rotational)
+    render_velocities()
 
 
     # SPECTRUM

@@ -476,12 +476,10 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
 
         #Add RV
         if 'RV' in config:
-            #resulty = RV(config['RV'], resultx, resulty)
             resulty = RV(resultx, resulty, **config['RV'])
 
         # Add vsini
         if 'vrot' in config:
-            #resulty = vrot(config['vrot'], resultx, resulty)
             resulty = vrot(resultx, resulty, **config['vrot'])
 
         # rebin to observed wavelengths
