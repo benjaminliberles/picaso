@@ -31,6 +31,7 @@ os.environ['PYSYN_CDBS'] = st.text_input("Enter in the datapath to your PYSYN_CB
 # =======================================
 import pandas as pd
 import toml
+import tempfile
 import tomllib 
 import numpy as np 
 import copy 
@@ -207,12 +208,10 @@ def uploaded_config_is_valid(uploaded_config):
         'observation_type_options': None,
         'irradiated': None,
         'calc_type': None,
-        'OpticalProperties': ['opacity_file', 'opacity_method', 'opacity_kwargs', 'virga_mieff'],
-        'star': ['type_options'],
+        'OpticalProperties': ['opacity_file', 'opacity_method', 'virga_mieff'],
         'object': None,
         'temperature': ['pressure', 'profile'],
-        'chemistry': ['method'],
-        'geometry': ['phase'],
+        'chemistry': ['method']
     }
 
     is_valid = True
@@ -236,9 +235,9 @@ def uploaded_config_is_valid(uploaded_config):
         if not isinstance(uploaded_config['ObservationData'], dict):
              st.error("Section 'ObservationData' must be a table (dictionary)")
              is_valid = False
-    else:
+    elif 'retrieval' in uploaded_config:
         # Based on driver.toml, it should probably be there
-        st.warning("Missing 'ObservationData' section. Please ensure it is provided in your configuration.")
+        st.error("Missing 'ObservationData' section when 'retrieval' seection is included. Please ensure it is provided in your configuration or remove retrieval options.")
         is_valid = False
 
     return is_valid
@@ -539,25 +538,69 @@ def run_spectrum():
     """
     if config['calc_type'] =='spectrum' and st.button(f'Run {config['calc_type']}'):
         try:
-
-            df = go.run(driver_dict=clean_dictionary(config))
+            df, picaso_class = go.run(driver_dict=clean_dictionary(config), return_class=True)
             observation_key = config['observation_type']
             wavenumber, albedo_or_fluxes = df['wavenumber'] , df[observation_key]
             wavenumber, albedo_or_fluxes = jdi.mean_regrid(wavenumber, albedo_or_fluxes, R=spectral_resolution)
             spec_fig = jpi.spectrum(wavenumber, albedo_or_fluxes, plot_width=500, x_range=wavelength_range)
             
-            # Persist in session state
-            st.session_state['spec_fig'] = spec_fig
-            st.session_state['spec_data'] = {'wavenumber': wavenumber, 'albedo_or_fluxes': albedo_or_fluxes}
+            st.session_state['spectrum_results'] = {
+                'df': df,
+                'picaso_class': picaso_class,
+                'wavenumber': wavenumber,
+                'albedo_or_fluxes': albedo_or_fluxes,
+                'spec_fig': spec_fig,
+                'observation_key': observation_key
+            }
         except Exception as e:
             st.warning('Make sure you have configured temperature, pressure, and chemistry before running a spectrum.')
             st.write(e)
         st.divider()
-    
-    if 'spec_fig' in st.session_state:
+
+    if 'spectrum_results' in st.session_state:
+        results = st.session_state['spectrum_results']
         # plot spectrum
-        streamlit_bokeh(st.session_state['spec_fig'], theme="streamlit", key="spectrum")
-        return st.session_state['spec_fig']
+        streamlit_bokeh(results['spec_fig'], theme="streamlit", key="spectrum")
+
+        # DOWNLOAD BUTTONS
+        col1, col2 = st.columns(2)
+        with col1:
+            # NetCDF Download
+            if 'netcdf_data' not in results:
+                try:
+                    ds = jdi.output_xarray(results['df'], results['picaso_class'])
+                    with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp:
+                        ds.to_netcdf(tmp.name)
+                        with open(tmp.name, "rb") as f:
+                            results['netcdf_data'] = f.read()
+                    os.remove(tmp.name)
+                except Exception as e:
+                    st.error(f"Error creating NetCDF: {e}")
+            
+            if 'netcdf_data' in results:
+                st.download_button(
+                    label="Download PICASO xarray (NetCDF)",
+                    data=results['netcdf_data'],
+                    file_name="picaso_spectrum.nc",
+                    mime="application/x-netcdf"
+                )
+
+        with col2:
+            # ASCII Download
+            if 'ascii_data' not in results:
+                df_ascii = pd.DataFrame({
+                    'wavenumber': results['wavenumber'],
+                    results['observation_key']: results['albedo_or_fluxes']
+                })
+                results['ascii_data'] = df_ascii.to_csv(index=False)
+
+            st.download_button(
+                label="Download ASCII (wavenumber, spectrum)",
+                data=results['ascii_data'],
+                file_name="picaso_spectrum.csv",
+                mime="text/csv"
+            )
+        return results['spec_fig']
 
     return None
 
@@ -746,8 +789,9 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
 
 def render_additional_retrieval_parameters(parameter_dict, config):
     #adds other retrieval parameters: vsini, data offsets, error inflation
-    st.subheader("Data Systematics")
+    
     for f in config['ObservationData']['filenames']:
+        st.subheader("Data Systematics")
         name = os.path.splitext(os.path.basename(f))[0]
         with st.expander(f"Systematics for {name}"):
             if st.checkbox(f"Add error inflation term", key=f"err_inf_{name}"):

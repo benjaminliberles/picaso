@@ -474,15 +474,15 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
             #leaving now to make sure Fran can test with his framework
             resulty = 1e-8 * (R / d) ** 2 * resulty
 
-        #TODO these dont map directly to the fucntion inputs 
-        #so currently they appear to be broken and not usable 
-        # Add RV
+        #Add RV
         if 'RV' in config:
-            resulty = RV(config['RV'], resultx, resulty)
+            #resulty = RV(config['RV'], resultx, resulty)
+            resulty = RV(resultx, resulty, **config['RV'])
 
         # Add vsini
         if 'vrot' in config:
-            resulty = vrot(config['vrot'], resultx, resulty)
+            #resulty = vrot(config['vrot'], resultx, resulty)
+            resulty = vrot(resultx, resulty, **config['vrot'])
 
         # rebin to observed wavelengths
         for obs_key in DATA_DICT.keys():
@@ -592,18 +592,18 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools):
     # return scalar if only one input sample
     return logls[0] if n_samples == 1 else logls
 
-def vrot(v_array, wvl, spectrum_array, eps=0.6, nr=10, ntheta=100, dif=0.0):
+def vrot(wvl, spectrum_array, v_array=0.0, eps=0.6, nr=10, ntheta=100, dif=0.0):
     """
-    Apply rotational broadening to multiple spectra.
+    Apply rotational broadening to single or multiple spectra.
 
     Parameters
     ----------
-    v_array : array_like, shape (n_spectra,)
-        Projected rotational velocities (km/s) for each spectrum.
     wvl : array_like, shape (n_wvl,)
         Wavelength grid.
-    spectrum_array : array_like, shape (n_spectra, n_wvl)
+    spectrum_array : array_like, shape (n_wvl,) or (n_spectra, n_wvl)
         Input spectra to be rotationally broadened.
+    v_array : float or array_like, shape (n_spectra,), optional
+        Projected rotational velocities (km/s). Default is 0.0.
     eps : float, optional
         Limb darkening coefficient (default: 0.6).
     nr : int, optional
@@ -615,12 +615,23 @@ def vrot(v_array, wvl, spectrum_array, eps=0.6, nr=10, ntheta=100, dif=0.0):
 
     Returns
     -------
-    broadened_array : array_like, shape (n_spectra, n_wvl)
+    broadened_array : array_like, shape (n_wvl,) or (n_spectra, n_wvl)
         Rotationally broadened spectra.
     """
+    is_1d = (np.ndim(spectrum_array) == 1)
+    spectrum_array = np.atleast_2d(spectrum_array)
+    v_array = np.atleast_1d(v_array)
+
+    n_spectra = spectrum_array.shape[0]
+    if len(v_array) == 1 and n_spectra > 1:
+        v_array = np.full(n_spectra, v_array[0])
+
     broadened_array = np.zeros_like(spectrum_array)
 
     for i, (v, spectrum) in enumerate(zip(v_array, spectrum_array)):
+        if v == 0:
+            broadened_array[i] = spectrum
+            continue
         ns = np.zeros_like(spectrum)
         tarea = 0.0
         dr = 1.0 / nr
@@ -628,6 +639,7 @@ def vrot(v_array, wvl, spectrum_array, eps=0.6, nr=10, ntheta=100, dif=0.0):
         for j in range(nr):
             r = dr / 2.0 + j * dr
             nphi = int(ntheta * r)
+            if nphi == 0: nphi = 1
             area = ((r + dr/2.0)**2 - (r - dr/2.0)**2) / nphi * (1.0 - eps + eps * np.cos(np.arcsin(r)))
 
             for k in range(nphi):
@@ -644,20 +656,20 @@ def vrot(v_array, wvl, spectrum_array, eps=0.6, nr=10, ntheta=100, dif=0.0):
 
         broadened_array[i] = ns / tarea
 
-    return broadened_array
+    return broadened_array[0] if is_1d else broadened_array
 
-def RV(v_array, wvl, flux_array, edgeHandling='firstlast', fillValue=None):
+def RV(wvl, flux_array, v_array=0.0, edgeHandling='firstlast', fillValue=None):
     """
-    Doppler shift multiple spectra given an array of velocities.
+    Doppler shift single or multiple spectra given an array of velocities.
 
     Parameters
     ----------
-    v_array : array_like, shape (n_spectra,)
-        Doppler velocities in km/s for each spectrum.
     wvl : array_like, shape (n_wvl,)
         Shared input wavelength grid.
-    flux_array : array_like, shape (n_spectra, n_wvl)
+    flux_array : array_like, shape (n_wvl,) or (n_spectra, n_wvl)
         Flux values for each spectrum.
+    v_array : float or array_like, shape (n_spectra,), optional
+        Doppler velocities in km/s. Default is 0.0.
     edgeHandling : str, optional
         'firstlast' (default) or 'fillValue'.
     fillValue : float, optional
@@ -665,16 +677,27 @@ def RV(v_array, wvl, flux_array, edgeHandling='firstlast', fillValue=None):
 
     Returns
     -------
-    nflux_array : array_like, shape (n_spectra, n_wvl)
+    nflux_array : array_like, shape (n_wvl,) or (n_spectra, n_wvl)
         Doppler-shifted fluxes, resampled onto the original wavelength grid.
     """
     cvel = 299_792.458  # speed of light in km/s
+    is_1d = (np.ndim(flux_array) == 1)
+    flux_array = np.atleast_2d(flux_array)
+    v_array = np.atleast_1d(v_array)
+
     n_spectra, n_wvl = flux_array.shape
+    if len(v_array) == 1 and n_spectra > 1:
+        v_array = np.full(n_spectra, v_array[0])
+
     nflux_array = np.empty_like(flux_array)
 
     for i in range(n_spectra):
         v = v_array[i]
         flux = flux_array[i]
+
+        if v == 0:
+            nflux_array[i] = flux
+            continue
 
         # Shifted wavelength
         wlprime = wvl * (1.0 + v / cvel)
@@ -687,16 +710,19 @@ def RV(v_array, wvl, flux_array, edgeHandling='firstlast', fillValue=None):
 
         if edgeHandling == "firstlast":
             nin = ~np.isnan(nflux)
-            if not nin[0]:
-                fvindex = np.argmax(nin)
-                nflux[:fvindex] = nflux[fvindex]
-            if not nin[-1]:
-                lvindex = -np.argmax(nin[::-1]) - 1
-                nflux[lvindex + 1:] = nflux[lvindex]
+            if not nin.any():
+                nflux = np.full_like(nflux, fv)
+            else:
+                if not nin[0]:
+                    fvindex = np.argmax(nin)
+                    nflux[:fvindex] = nflux[fvindex]
+                if not nin[-1]:
+                    lvindex = len(nin) - 1 - np.argmax(nin[::-1])
+                    nflux[lvindex + 1:] = nflux[lvindex]
 
         nflux_array[i] = nflux
 
-    return nflux_array
+    return nflux_array[0] if is_1d else nflux_array
 
 def convolver(newx, x, y):
     #
