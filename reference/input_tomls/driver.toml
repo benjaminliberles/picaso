@@ -286,4 +286,7 @@ log=false
 
 [retrieval.sampler]
 code='dynesty'#options: ultranest, emcee, pymultinest, dynesty
-sampler_kwargs={live_points = 100}
+code_options=['dynesty']#should eventually be ultranest, emcee, pymultinest, dynesty
+sampler_kwargs={live_points = 700}#currently for NestedSampler in dynesty
+resume=false
+run_kwargs={}#currently for run_nested in dynesty

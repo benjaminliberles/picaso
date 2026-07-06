@@ -1099,6 +1099,23 @@ def render_retrievals(spectrum_figure=None):
             _, _, _, spectrum_fig = sample_plots(ALL_TOMLS, save_all_class_pt, nsamples, run_clouds=('clouds' in config))
             streamlit_bokeh(spectrum_fig)
     
+    st.divider()
+    st.subheader('Sampler Options')
+
+    retrieval_object['sampler']={}
+
+    code_options = retrieval_object.get('sampler',{}).get('code_options',['dynesty'])
+
+    retrieval_object['sampler']['code'] =  st.selectbox("Choose bayesian code to use", code_options, index=None)
+
+    retrieval_object['sampler']['sampler_kwargs']  = eval(
+        st.text_input("Enter sampler_kwargs as parsable dictionary e.g., {'live_points' : 700}.", 
+                      value=str(retrieval_object['sampler'].get('sampler_kwargs',{}))))
+    
+    retrieval_object['sampler']['run_kwargs'] = eval(
+        st.text_input("Enter run_kwargs as parsable dictionary e.g., {'max_iter' : 10000}.", 
+                      value=str(retrieval_object['sampler'].get('run_kwargs',{}))))
+    
     return retrieval_object
 
 def render_download_config(retrieval_object):
