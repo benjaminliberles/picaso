@@ -497,7 +497,7 @@ def render_free_chem_options():
         for i in background_config['gases']: 
             selected_mols.pop(selected_mols.index(i))
             if i in config['chemistry']['free']: del config['chemistry']['free'][i]
-    
+    print('SELECTED MOLS',selected_mols)
     config['chemistry']['free']['species']=selected_mols
 
 
@@ -997,11 +997,11 @@ def render_retrievals(spectrum_figure=None):
     if spectrum_figure is not None:
         col1, col2 = st.columns(2)
         with col1:
-            plot_only_data = st.button("Data check and Plot only")
+            plot_only_data = st.button("Data check & plot")
         with col2:
-            plot_with_ref = st.button("Data check and Plot w/ ref model")
+            plot_with_ref = st.button("Data check & plot w/ ref model")
     else:
-        plot_only_data = st.button("Plot data")
+        plot_only_data = st.button("Data check & plot")
         plot_with_ref = False
 
     if plot_with_ref or plot_only_data:
@@ -1012,14 +1012,14 @@ def render_retrievals(spectrum_figure=None):
             for key, val in data_dict.items():
                 st.write(f"**{key}**: {len(val[0])} points, wavenumber range: {min(val[0]):.2f} - {max(val[0]):.2f}")
             
-            if plot_with_ref and 'spec_data' in st.session_state:
-                spec_data = st.session_state['spec_data']
+            if plot_with_ref and 'spectrum_results' in st.session_state:
+                spec_data = st.session_state['spectrum_results']
                 # Recreate to avoid cumulative mutation of the persisted figure
                 basefig = jpi.spectrum(spec_data['wavenumber'], spec_data['albedo_or_fluxes'], 
                                        plot_width=500, x_range=wavelength_range)
             else:
                 basefig = None
-            
+                
             fig = basefig
             for i in data_dict.keys():
                 x,y,e=data_dict[i]
