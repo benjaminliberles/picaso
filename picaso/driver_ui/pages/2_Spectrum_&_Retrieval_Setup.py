@@ -140,7 +140,7 @@ def clean_dictionary(data, suffix="_options"):
     if isinstance(data, list):
         return [clean_dictionary(v, suffix) for v in data]
     
-    if isinstance(data, (np.floating, np.integer)):
+    if isinstance(data, (np.floating, np.integer, np.str_, np.bool_)):
         return data.item()
     if isinstance(data, np.ndarray):
         return data.tolist()
@@ -497,7 +497,7 @@ def render_free_chem_options():
         for i in background_config['gases']: 
             selected_mols.pop(selected_mols.index(i))
             if i in config['chemistry']['free']: del config['chemistry']['free'][i]
-    print('SELECTED MOLS',selected_mols)
+
     config['chemistry']['free']['species']=selected_mols
 
 
@@ -918,6 +918,10 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
 
     spectrum_fig = None
     if run_spectrum:
+        #TODO if this is a true test of the retireval 
+        #then it should call MODEL or one of the actual function calls 
+        #for the retrieval. especially when testing the instrument 
+        #convolution and rebinning to data 
         WNO_LIST = []
         ALB_LIST = []
         for prior_toml in ALL_TOMLS:
@@ -940,6 +944,15 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
 
 def render_additional_retrieval_parameters(parameter_dict, config):
     #adds other retrieval parameters: vsini, data offsets, error inflation
+    set_instruments=[None]*len(config['ObservationData']['filenames'])
+    loaded_options_mapping = go.get_instrument_options()
+    if len(loaded_options_mapping.keys())>=1:
+        for ind, f in enumerate(config['ObservationData']['filenames']):
+            st.subheader("Set Instrument Convolution")
+            name = os.path.splitext(os.path.basename(f))[0]
+            with st.expander(f"Resolution file to convolve with {name}"):
+                set_instruments[ind] = st.selectbox("Select an instrument", loaded_options_mapping.keys(), index=None)
+        config['ObservationData']['instruments'] = set_instruments
     
     for f in config['ObservationData']['filenames']:
         st.subheader("Data Systematics")
@@ -985,7 +998,7 @@ def render_retrievals(spectrum_figure=None):
         config['ObservationData']['filenames'] = []
 
     # Determine default data
-    units_df = format_config_section_for_df(config['ObservationData'], ignore_keys='filenames')
+    units_df = format_config_section_for_df(config['ObservationData'], ignore_keys=['filenames','instruments'])
     
     st.text('Specify column, coord, or data_var names and units. Units are only required if not specified through xarray.')
     st.text('Units should be in astropy format. If unitless (e.g., albedo, or transit depth) enter unitless ')
@@ -1007,7 +1020,7 @@ def render_retrievals(spectrum_figure=None):
     if plot_with_ref or plot_only_data:
         #parses data and plots it to verify it is correct
         try:
-            data_dict = go.parse_data(**config['ObservationData'])
+            data_dict,_ = go.get_data(**config['ObservationData'])
             st.success(f"Successfully parsed {len(data_dict)} files: {list(data_dict.keys())}")
             for key, val in data_dict.items():
                 st.write(f"**{key}**: {len(val[0])} points, wavenumber range: {min(val[0]):.2f} - {max(val[0]):.2f}")
@@ -1047,18 +1060,38 @@ def render_retrievals(spectrum_figure=None):
     retrieval_stage_state_manager = {} # for streamlit rendering organization
 
     # WHEN USER IS DONE SELECTING, RENDER ALL RANGES FOR SELECTED PARAMETERS
-    retrieval_stage_state_manager['done_selecting_parameters'] =  st.selectbox("Done Selecting Methods", ("Yes", "No"), index=None)
+    retrieval_stage_state_manager['done_selecting_parameters'] =  st.selectbox("Done Selecting Free Parameters", ("Yes", "No"), index=None)
     if retrieval_stage_state_manager['done_selecting_parameters'] == 'Yes':
         prior_set_items = render_ranges_for_selected_parameters(parameter_handler)
-    st.divider()
+    
+    retrieval_object = {}
 
+    st.divider()
+    st.subheader('Sampler Options')
+
+    retrieval_object['sampler']={}
+
+    code_options = retrieval_object.get('sampler',{}).get('code_options',['dynesty'])
+
+    retrieval_object['sampler']['code'] =  st.selectbox("Choose bayesian code to use", code_options, index=None)
+
+    retrieval_object['sampler']['sampler_kwargs']  = eval(
+        st.text_input("Enter sampler_kwargs as parsable dictionary e.g., {'live_points' : 700}.", 
+                      value=str(retrieval_object['sampler'].get('sampler_kwargs',{}))))
+    
+    retrieval_object['sampler']['run_kwargs'] = eval(
+        st.text_input("Enter run_kwargs as parsable dictionary e.g., {'max_iter' : 10000}.", 
+                      value=str(retrieval_object['sampler'].get('run_kwargs',{}))))
+    
+    
+    st.divider()
     st.subheader("Set and test your prior bounds")
     st.text('Now that you have set prior ranges you can use the functionality below to test the prior. Below you can run X-number of samples through the prior ranges and visualize chemistry, p-t profiles, and spectra.')
 
     ALL_TOMLS = []
     save_all_class_pt = []
     nsamples = st.number_input('Number of samples?', 5)
-    retrieval_object = {}
+    
 
     # extract data to be able to write to toml to recreate
     for parameter in prior_set_items.keys():
@@ -1099,22 +1132,8 @@ def render_retrievals(spectrum_figure=None):
             _, _, _, spectrum_fig = sample_plots(ALL_TOMLS, save_all_class_pt, nsamples, run_clouds=('clouds' in config))
             streamlit_bokeh(spectrum_fig)
     
-    st.divider()
-    st.subheader('Sampler Options')
-
-    retrieval_object['sampler']={}
-
-    code_options = retrieval_object.get('sampler',{}).get('code_options',['dynesty'])
-
-    retrieval_object['sampler']['code'] =  st.selectbox("Choose bayesian code to use", code_options, index=None)
-
-    retrieval_object['sampler']['sampler_kwargs']  = eval(
-        st.text_input("Enter sampler_kwargs as parsable dictionary e.g., {'live_points' : 700}.", 
-                      value=str(retrieval_object['sampler'].get('sampler_kwargs',{}))))
     
-    retrieval_object['sampler']['run_kwargs'] = eval(
-        st.text_input("Enter run_kwargs as parsable dictionary e.g., {'max_iter' : 10000}.", 
-                      value=str(retrieval_object['sampler'].get('run_kwargs',{}))))
+    
     
     return retrieval_object
 

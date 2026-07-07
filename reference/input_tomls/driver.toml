@@ -14,6 +14,7 @@ data_unit = '' # astropy unit of column name if data is provided in csv, not xar
 coord = '' 
 coord_unit = '' # astropy unit of column name if data is provided in csv, not xarray format 
 error = ''
+instruments=[] # the names here are set by the file name of the fits of the diserser. Can run driver.get_instrument_options to see what jwst instruments are available and how to specify their names. 
 
 [OpticalProperties]
 opacity_file = '_default_/opacities/opacities.db' # single db 

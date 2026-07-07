@@ -13,6 +13,7 @@ from functools import partial
 import sys
 from schwimmbad import MPIPool
 dynesty.utils.pickle_module = dill
+from astropy.io import fits
 
 #all these come from justdoit
 #import os
@@ -291,10 +292,34 @@ def parse_data(filenames, coord, data,  error, coord_unit=None, data_unit=None):
 
 def get_data(config): 
     """
-    Processes observational data using parse_data.
+    Processes observational data using parse_data and instrument properties 
+    for resolution convolution. 
+
+    Currently only supports jwst instrument names. can see options using instrument options 
+    
+    Returns
+    -------
+    data_dict, resolution_conv_dict 
+        data dictionary with wavenumber, y, e and matching dictionary with 
+        resolution as a fucntion of wavelength (micron) for instruments
     """
     observations_config = config.get('ObservationData')
+    
+    if 'instruments' in observations_config:
+        instruments = observations_config.get('instruments')
+        del observations_config['instruments']
+    
+    data_dict = parse_data(**observations_config)
 
+    resolution_dict = {}
+    if len(instruments)>0:
+        if len(instruments) != len(data_dict.keys()):
+            raise Exception("need to input the same number of instrument keys for convolution as filenames. if you plan to use the same instrument for all files then enter multiple entries (e.g., ['jwst nirspec prism','jwst nirspec prism'])")
+        else: 
+            
+            for i,name in enumerate(data_dict.keys()):
+                resolution_dict[name] = get_instrument_R_fits(instruments[i])
+        
     # Leaving this out for now until there is rationale 
     # to enforce mapping. For now parse_data will try and 
     # convert units and units for non flux type data is not converted
@@ -307,7 +332,7 @@ def get_data(config):
     # elif obs_type=='transmission':
     #     to_fit = 'transit_depth'
         
-    return parse_data(**observations_config)
+    return data_dict,resolution_dict
 
 #retrieval funs
 def get_data_old(config): 
@@ -406,7 +431,7 @@ def hypercube(u, fitpars):
             x[i]=10**x[i]  
     return x
 
-def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
+def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True,CONV_DICT={}):
     """
     Generate model spectra for parameter sets.
 
@@ -426,6 +451,8 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
         Parameterization helper.
     DATA_DICT : dict
         Observational data dictionary.
+    CONV_DICT : dict 
+        Instrument Resolution convolution dictionary from parse data 
 
     Returns
     -------
@@ -485,7 +512,9 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
         # rebin to observed wavelengths
         for obs_key in DATA_DICT.keys():
             xdata, _, _ = DATA_DICT[obs_key]
-            conv = config.get('convolve')
+            #todo at some point we can just make this one option
+            conv = config.get('convolve')#user has specified properties through config['convolve'] kwargs
+            jwst_instrument_conv_from_file = CONV_DICT.get(obs_key)#user has specified conv properties through instruments kwarg in ObservationData
             if conv:
                 conv_cfg = conv.get(obs_key, conv) if isinstance(conv, dict) else {'R': conv}
                 R_conv = conv_cfg.get('R', conv_cfg.get('resolution')) if isinstance(conv_cfg, dict) else conv_cfg
@@ -494,6 +523,10 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
                 if np.isscalar(R_conv):
                     R_conv = np.full_like(xdata, R_conv, dtype=float)
                 rebinned = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), 1e4/xdata)
+            elif jwst_instrument_conv_from_file: 
+                micron, R_conv = jwst_instrument_conv_from_file
+                raise Exception('This is not fully tested... Need to enable this before proceeding')
+                rebinned = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), micron)
             else:
                 _, rebinned = mean_regrid(resultx, resulty, newx=xdata)
             y_model[obs_key].append(rebinned)
@@ -513,7 +546,7 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True):
     else:
         return y_model, profiles
 
-def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools):
+def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT={}):
     """
     Vectorized log-likelihood.
 
@@ -536,7 +569,7 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools):
     n_samples = cube.shape[0]
 
     # Compute model spectra for all samples
-    y_model_dict = MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT)
+    y_model_dict = MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT,CONV_DICT=CONV_DICT)
 
     logls = []
 
@@ -803,10 +836,10 @@ def retrieve(config, param_tools):
     # def convolver(newx,x,y):
     #     return newy
       
-    DATA_DICT = get_data(config)
+    DATA_DICT,CONV_DICT = get_data(config)
     hypercube_fn = partial(hypercube, fitpars=fitpars)
     loglike_fn = partial(log_likelihood, fitpars=fitpars, config=config,
-                  OPA=OPA, param_tools=param_tools, DATA_DICT=DATA_DICT)
+                  OPA=OPA, param_tools=param_tools, DATA_DICT=DATA_DICT,CONV_DICT=CONV_DICT)
     
     #pool (MPI for clusters)
     pool = MPIPool()
@@ -886,9 +919,9 @@ def check_model_samples(config, N=100, samples=None):
     
     thetas = np.array(thetas)
 
-    DATA_DICT = get_data(config)
+    DATA_DICT,CONV_DICT = get_data(config)
 
-    models, profiles = MODEL(thetas[:N], fitpars, config, OPA, param_tools, DATA_DICT, retrieval=False)
+    models, profiles = MODEL(thetas[:N], fitpars, config, OPA, param_tools, DATA_DICT, retrieval=False,CONV_DICT=CONV_DICT)
 
     return models, thetas, profiles
 
@@ -1126,6 +1159,47 @@ def find_values_for_key(data, target_key):
                         results.extend(find_values_for_key(item, target_key))
     
     return results
+
+def get_instrument_options():
+    pandeia = os.environ.get('pandeia_refdata',None)
+    if pandeia == None: 
+        return {}
+    
+    jwst_options = ['niriss','nircam','miri','nirspec']
+    dispersion_files = {i:glob.glob(os.path.join(pandeia,'jwst',i,'dispersion','*fits')) for i in jwst_options}
+    pretty_options_map={}
+    for inst in jwst_options: 
+        for f in dispersion_files[inst]: 
+            pretty = ' '.join(os.path.splitext(os.path.basename(f))[0].split('_')[0:-2])
+            pretty_options_map[pretty] = f
+
+    return pretty_options_map
+
+def get_instrument_R_fits(key): 
+    """
+    Reads the JWST Pandeia data fits file data 
+
+    Parameters 
+    ----------
+    filepath : str 
+        filepath to pandeia data jwst fits file 
+    
+    Returns 
+    -------
+    array, array 
+        wavelength array (microns), resolution
+    """
+    options = get_instrument_options()
+    filepath = options.get(key,None)
+    if filepath == None: 
+        raise Exception('I could not find a jwst filepath with the key you specified:',key)
+    with fits.open(filepath) as hdu:
+        rdata = hdu[1].data
+    w = [i[0] for i in rdata]
+    r = [i[2] for i in rdata]
+    return w, r
+
+
 
 def viz(picaso_output):
     figs = []
