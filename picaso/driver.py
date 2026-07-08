@@ -269,9 +269,9 @@ def parse_data(filenames, coord, data,  error, coord_unit=None, data_unit=None):
             flux_converted, flux_err_converted = convert_flux_units(
                 ds.coords['wavenumber'].values,
                 ds.data_vars[data].values,
-                to_f_unit = current_unit_str,
+                to_f_unit = target_unit,
                 flux_err = ds.data_vars[error].values,
-                f_unit = target_unit
+                f_unit = current_unit_str
             )
             ds[data].values = flux_converted
             ds[error].values = flux_err_converted
