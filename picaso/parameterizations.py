@@ -89,7 +89,7 @@ class Parameterize():
         virga_kwargs.pop('kzz')
         self.picaso.virga(**virga_kwargs)
         df_cld = self.picaso.inputs['clouds']['profile']
-        return df_cld 
+        return df_cld.astype(float) 
 
     def cloud_flex_fsed(self, condensate, base_pressure, ndz, fsed, distribution, 
                   lognorm_kwargs = {'sigma':np.nan, 'lograd':np.nan}, 
@@ -143,7 +143,7 @@ class Parameterize():
         df_cld = picaso_format(opd, w0, g0, wavenumber_grid, self.pressure_layer, 
                                           p_bottom=base_pressure,p_decay=opd_h)
 
-        return df_cld 
+        return df_cld.astype(float) 
     flex_cloud =  cloud_flex_fsed  
     def cloud_brewster_mie(self, condensate, distribution, decay_type,
                   lognorm_kwargs = {'sigma':np.nan, 'lograd':np.nan}, 
@@ -194,8 +194,7 @@ class Parameterize():
             opd_profile = self.deck_decay(**deck_kwargs)
         
         df = picaso_format(opd, w0, g0, wavenumber_grid, self.pressure_layer, opd_profile=opd_profile)
-        df = df.astype(float)
-        return df 
+        return df.astype(float)
     
     def cloud_brewster_grey(self, decay_type, alpha, ssa, reference_wave=1,
                   slab_kwargs={'ptop':np.nan,'dp':np.nan, 'reference_tau':np.nan},
@@ -239,7 +238,7 @@ class Parameterize():
                 'pressure':pressures
             })
 
-        return df 
+        return df.astype(float)
 
     def cloud_hard_grey(self,g0, w0, opd,p, dp): 
         if isinstance(g0,int):g0=[g0]
@@ -250,7 +249,7 @@ class Parameterize():
 
         self.picaso.clouds(g0=g0, w0=w0, opd=opd,p=p,dp=dp)
         df_cld = self.picaso.inputs['clouds']['profile']
-        return df_cld
+        return df_cld.astype(float)
 
     def deck_decay(self,ptop, dp=0.005): 
         """

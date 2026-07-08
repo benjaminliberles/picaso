@@ -678,10 +678,17 @@ def run_spectrum():
     """
     if config['calc_type'] =='spectrum' and st.button(f'Run {config['calc_type']}'):
         try:
-            df, picaso_class = go.run(driver_dict=clean_dictionary(config), return_class=True)
+            clean_dict = clean_dictionary(config)
+            df, picaso_class = go.run(driver_dict=clean_dict, return_class=True)
             observation_key = config['observation_type']
-            wavenumber, albedo_or_fluxes = df['wavenumber'] , df[observation_key]
-            wavenumber, albedo_or_fluxes = jdi.mean_regrid(wavenumber, albedo_or_fluxes, R=spectral_resolution)
+            resultx, resulty = df['wavenumber'] , df[observation_key]
+            
+            processed = go.process_model(resultx, resulty, 
+                                         config=clean_dict, 
+                                         regrid_R=spectral_resolution)
+            
+            wavenumber, albedo_or_fluxes = processed['model']
+
             spec_fig = jpi.spectrum(wavenumber, albedo_or_fluxes, plot_width=500, x_range=wavelength_range)
             
             st.session_state['spectrum_results'] = {
@@ -918,28 +925,33 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
 
     spectrum_fig = None
     if run_spectrum:
-        #TODO if this is a true test of the retireval 
-        #then it should call MODEL or one of the actual function calls 
-        #for the retrieval. especially when testing the instrument 
-        #convolution and rebinning to data 
+        # Get data and convolution dictionaries
+        DATA_DICT, CONV_DICT = go.get_data(config)
+        
         WNO_LIST = []
         ALB_LIST = []
         for prior_toml in ALL_TOMLS:
             clean_dict = clean_dictionary(prior_toml)
             df = go.run(driver_dict=clean_dict)
             obs_key = prior_toml['observation_type']
-            wno, alb = df['wavenumber'] , df[obs_key]
-            if 'RV' in clean_dict:
-                alb = go.RV(wno, alb, **clean_dict['RV'])
-            # Add vsini
-            if 'vrot' in clean_dict:
-                alb = go.vrot(wno, alb, **clean_dict['vrot'])
+            resultx, resulty = df['wavenumber'] , df[obs_key]
+            
+            processed = go.process_model(resultx, resulty, 
+                                         data_dict=DATA_DICT, 
+                                         config=clean_dict, 
+                                         conv_dict=CONV_DICT)
 
-            wno, alb = jdi.mean_regrid(wno, alb, R=spectral_resolution)
-            WNO_LIST.append(wno)
-            ALB_LIST.append(alb)
+            # Aggregate all observations if multiple exist
+            for key in processed:
+                WNO_LIST.append(processed[key][0])
+                ALB_LIST.append(processed[key][1])
 
         spectrum_fig = jpi.spectrum(WNO_LIST, ALB_LIST, palette=[(255,0,0,0.3)], plot_width=500,x_range=wavelength_range)
+        
+        for i in DATA_DICT.keys(): 
+            x,y,e = DATA_DICT[i]
+            spectrum_fig = jpi.plot_errorbar(1e4/x,y,e,plot=spectrum_fig)
+    
     return pressure_temperature_fig, mixing_ratio_bokeh_fig, clouds_fig, spectrum_fig
 
 def render_additional_retrieval_parameters(parameter_dict, config):
@@ -947,11 +959,12 @@ def render_additional_retrieval_parameters(parameter_dict, config):
     set_instruments=[None]*len(config['ObservationData']['filenames'])
     loaded_options_mapping = go.get_instrument_options()
     if len(loaded_options_mapping.keys())>=1:
+        st.subheader("Set Instrument Convolution")
         for ind, f in enumerate(config['ObservationData']['filenames']):
-            st.subheader("Set Instrument Convolution")
             name = os.path.splitext(os.path.basename(f))[0]
             with st.expander(f"Resolution file to convolve with {name}"):
-                set_instruments[ind] = st.selectbox("Select an instrument", loaded_options_mapping.keys(), index=None)
+                set_instruments[ind] = st.selectbox(
+                    "Select an instrument", loaded_options_mapping.keys(), index=None, key=name)
         config['ObservationData']['instruments'] = set_instruments
     
     for f in config['ObservationData']['filenames']:
@@ -1020,27 +1033,36 @@ def render_retrievals(spectrum_figure=None):
     if plot_with_ref or plot_only_data:
         #parses data and plots it to verify it is correct
         try:
-            data_dict,_ = go.get_data(**config['ObservationData'])
+            data_dict,conv_dict = go.get_data(config)
             st.success(f"Successfully parsed {len(data_dict)} files: {list(data_dict.keys())}")
             for key, val in data_dict.items():
                 st.write(f"**{key}**: {len(val[0])} points, wavenumber range: {min(val[0]):.2f} - {max(val[0]):.2f}")
             
             if plot_with_ref and 'spectrum_results' in st.session_state:
-                spec_data = st.session_state['spectrum_results']
-                # Recreate to avoid cumulative mutation of the persisted figure
-                basefig = jpi.spectrum(spec_data['wavenumber'], spec_data['albedo_or_fluxes'], 
-                                       plot_width=500, x_range=wavelength_range)
+
+                clean_dict = clean_dictionary(config)
+                observation_key = config['observation_type']
+                df = st.session_state['df']
+                resultx, resulty = df['wavenumber'] , df[observation_key]
+            
+                processed = go.process_model(resultx, resulty, 
+                                         config=clean_dict)
+                x,y,l = [],[],[]
+                for i in processed.keys(): 
+                    x+=[processed[i][0]]
+                    y+=[processed[i][1]]
+                    l+=[i]
+
+                basefig = jpi.spectrum(x, y, 
+                                       plot_width=500, 
+                                       x_range=wavelength_range,
+                                       legend=l)
             else:
                 basefig = None
                 
             fig = basefig
             for i in data_dict.keys():
                 x,y,e=data_dict[i]
-                # TODO there might be an issue with distance/radius scaling 
-                # if user is uploading data and comparing with a model. 
-                # Need to match what is being done 
-                # in modeling for 'thermal' 
-                # or thermal spectrum figure could have R2/D2 scaling in it
                 fig = jpi.plot_errorbar(1e4/x,y,e,plot=fig)
             
             st.session_state['data_plot'] = fig

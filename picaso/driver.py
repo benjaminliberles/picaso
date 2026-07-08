@@ -303,11 +303,9 @@ def get_data(config):
         data dictionary with wavenumber, y, e and matching dictionary with 
         resolution as a fucntion of wavelength (micron) for instruments
     """
-    observations_config = config.get('ObservationData')
+    observations_config = config.get('ObservationData').copy()
     
-    if 'instruments' in observations_config:
-        instruments = observations_config.get('instruments')
-        del observations_config['instruments']
+    instruments = observations_config.pop('instruments', [])
     
     data_dict = parse_data(**observations_config)
 
@@ -431,6 +429,92 @@ def hypercube(u, fitpars):
             x[i]=10**x[i]  
     return x
 
+def process_model(resultx, resulty, data_dict=None, conv_dict=None, config=None, regrid_R=None):
+    """
+    Processes model output by applying distance scaling, Doppler shift (RV), 
+    rotational broadening (vrot), and rebinning to data axes.
+
+    Parameters
+    ----------
+    resultx : array
+        PICASO output wavenumber.
+    resulty : array
+        PICASO model output.
+    data_dict : dict, optional
+        Observational data dictionary {key: [wavenumber, y, error]}.
+    config : dict, optional
+        Configuration dictionary to extract RV, vrot, distance scaling, and convolution.
+    CONV_DICT : dict, optional
+        Instrument resolution convolution dictionary.
+    regrid_R : float, optional
+        Fallback resolution for mean_regrid if data_dict is not provided.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys from data_dict (or 'model' if data_dict is None) 
+        containing lists of [x, y] of processed/binned model.
+    """
+    config = config or {}
+    conv_dict = conv_dict or {}
+    
+    distance_scaling = 1.0
+    if config.get('observation_type') == 'thermal' and 'object' in config:
+        R_dict = config['object'].get('radius')
+        d_dict = config['object'].get('distance')
+        if R_dict and d_dict:
+            R = R_dict['value'] * u.Unit(R_dict['unit']).to(u.m)
+            d = d_dict['value'] * u.Unit(d_dict['unit']).to(u.m)
+            distance_scaling = (R / d) ** 2
+
+    resulty = distance_scaling * resulty
+
+    RV_config = config.get('RV')
+    if RV_config:
+        resulty = RV(resultx, resulty, **RV_config)
+
+    vrot_config = config.get('vrot')
+    if vrot_config:
+        resulty = vrot(resultx, resulty, **vrot_config)
+
+    convolve_config = config.get('convolve')
+
+    returns = {}
+    if data_dict is not None and len(data_dict) > 0:
+        for obs_key in data_dict.keys():
+            xdata, _, _ = data_dict[obs_key]
+            
+            jwst_instrument_conv_from_file = conv_dict.get(obs_key) if conv_dict else None
+            
+            if convolve_config:
+                conv_cfg = convolve_config.get(obs_key, convolve_config) if isinstance(convolve_config, dict) else {'R': convolve_config}
+                R_conv = conv_cfg.get('R', conv_cfg.get('resolution')) if isinstance(conv_cfg, dict) else conv_cfg
+                if R_conv is None:
+                    raise ValueError("convolve_config must define 'R' or 'resolution'")
+                if np.isscalar(R_conv):
+                    R_conv = np.full_like(xdata, R_conv, dtype=float)
+                rebinned = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), 1e4/xdata)
+            elif jwst_instrument_conv_from_file:
+                # Note: this was noted as not fully tested in MODEL
+                wno_inst, R_conv = jwst_instrument_conv_from_file
+                # raise Exception('This is not fully tested... Need to enable this before proceeding')
+                rebinned_to_inst = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), 1e4/wno_inst)
+                _, rebinned = mean_regrid(wno_inst, rebinned_to_inst, newx=xdata)
+            else:
+                _, rebinned = mean_regrid(resultx, resulty, newx=xdata)
+            
+            returns[obs_key] = [xdata, rebinned]
+    else:
+        #only used if data_dict is not supplied 
+        #otherwise it always returns the model on the data grid. 
+        if regrid_R is not None:
+            x_regrid, y_regrid = mean_regrid(resultx, resulty, R=regrid_R)
+            returns['model'] = [x_regrid, y_regrid]
+        else:
+            returns['model'] = [resultx, resulty]
+
+    return returns
+
 def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True,CONV_DICT={}):
     """
     Generate model spectra for parameter sets.
@@ -465,8 +549,8 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True,CON
     cube = np.atleast_2d(cube)  # ensure shape (N_samples, N_params)
     n_samples = cube.shape[0]
 
-    # initialize storage based on observation filenames
-    y_model = {os.path.splitext(os.path.basename(key))[0]: [] for key in config['ObservationData']['filenames']}
+    # initialize storage based on data dict keys (basename of filenames)
+    y_model = {key: [] for key in DATA_DICT.keys()}
 
     if not retrieval:
         profiles={}                                   
@@ -492,44 +576,16 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True,CON
         resultx = out['wavenumber']
         result_key = config['observation_type']
         resulty = out[result_key]
-        if config['observation_type'] == 'thermal':
-            R_dict = config['object']['radius']
-            R = R_dict['value'] * u.Unit(R_dict['unit']).to(u.m)
-            d_dict = config['object']['distance']
-            d = d_dict['value'] * u.Unit(d_dict['unit']).to(u.m)
-            #TODO this 1e-8 is not needed with the new data parser unit handling
-            #leaving now to make sure Fran can test with his framework
-            resulty = 1e-8 * (R / d) ** 2 * resulty
-
-        #Add RV
-        if 'RV' in config:
-            resulty = RV(resultx, resulty, **config['RV'])
-
-        # Add vsini
-        if 'vrot' in config:
-            resulty = vrot(resultx, resulty, **config['vrot'])
+        
+        #add RV, vsini, and resolution convolution, and binning
+        processed_outputs = process_model(resultx, resulty, 
+                                          data_dict=DATA_DICT, 
+                                          config=config, 
+                                          conv_dict=CONV_DICT)
 
         # rebin to observed wavelengths
         for obs_key in DATA_DICT.keys():
-            xdata, _, _ = DATA_DICT[obs_key]
-            #todo at some point we can just make this one option
-            conv = config.get('convolve')#user has specified properties through config['convolve'] kwargs
-            jwst_instrument_conv_from_file = CONV_DICT.get(obs_key)#user has specified conv properties through instruments kwarg in ObservationData
-            if conv:
-                conv_cfg = conv.get(obs_key, conv) if isinstance(conv, dict) else {'R': conv}
-                R_conv = conv_cfg.get('R', conv_cfg.get('resolution')) if isinstance(conv_cfg, dict) else conv_cfg
-                if R_conv is None:
-                    raise ValueError("config['convolve'] must define 'R' or 'resolution'")
-                if np.isscalar(R_conv):
-                    R_conv = np.full_like(xdata, R_conv, dtype=float)
-                rebinned = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), 1e4/xdata)
-            elif jwst_instrument_conv_from_file: 
-                micron, R_conv = jwst_instrument_conv_from_file
-                raise Exception('This is not fully tested... Need to enable this before proceeding')
-                rebinned = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), micron)
-            else:
-                _, rebinned = mean_regrid(resultx, resulty, newx=xdata)
-            y_model[obs_key].append(rebinned)
+            y_model[obs_key].append(processed_outputs[obs_key][1])
 
         if not retrieval:
             profiles[j]=picaso_class.inputs['atmosphere']['profile']
@@ -1187,7 +1243,7 @@ def get_instrument_R_fits(key):
     Returns 
     -------
     array, array 
-        wavelength array (microns), resolution
+        wavenumber array (ascending order), resolution
     """
     options = get_instrument_options()
     filepath = options.get(key,None)
@@ -1195,9 +1251,16 @@ def get_instrument_R_fits(key):
         raise Exception('I could not find a jwst filepath with the key you specified:',key)
     with fits.open(filepath) as hdu:
         rdata = hdu[1].data
-    w = [i[0] for i in rdata]
-    r = [i[2] for i in rdata]
-    return w, r
+    w = np.array([i[0] for i in rdata])
+    r = np.array([i[2] for i in rdata])
+    wno = 1e4/w
+
+    sort_indices = np.argsort(wno)
+    wno_sorted = wno[sort_indices]
+    w_sorted = w[sort_indices]
+    r_sorted = r[sort_indices] 
+
+    return wno_sorted, r_sorted
 
 
 
