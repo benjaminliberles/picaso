@@ -764,6 +764,20 @@ def render_free_parameter_selection():
         config['chemistry']['method']: config['chemistry'][config['chemistry']['method']],
         'method': config['chemistry']['method']
     }
+    # clean up free chemistry parameters if they are selected
+    if config['chemistry']['method'] == 'free':
+        free_chem = config['chemistry']['free']
+        profile_options = free_chem.get('profile_options', {})
+        for mol in free_chem.get('species', []):
+            if mol in free_chem:
+                current_profile = free_chem[mol].get('profile')
+                if current_profile in profile_options:
+                    allowed = profile_options[current_profile]
+                    if not isinstance(allowed, list): 
+                        allowed = []
+                    keep = ['profile', 'unit'] + allowed
+                    free_chem[mol] = {k: v for k, v in free_chem[mol].items() if k in keep}
+
     if 'clouds' in config:
         new_clouds = {}
         for k in config['clouds'].keys():
