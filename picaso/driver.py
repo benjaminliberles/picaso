@@ -2,6 +2,7 @@ from .justdoit import *
 from .justplotit import *
 from .parameterizations import Parameterize,cloud_averaging
 
+import warnings
 import tomllib 
 import toml
 import shutil
@@ -310,6 +311,16 @@ def get_data(config):
     
     data_dict = parse_data(**observations_config)
 
+    # remove NaNs from data and return a user warning
+    for key in data_dict.keys():
+        wno, y, e = data_dict[key]
+        nan_mask = np.isnan(y) | np.isnan(e)
+        if np.any(nan_mask):
+            nan_count = np.sum(nan_mask)
+            total_count = len(y)
+            warnings.warn(f"Removed {nan_count} NaNs out of {total_count} data points from {key}", UserWarning)
+            data_dict[key] = [wno[~nan_mask], y[nan_mask == False], e[nan_mask == False]]
+
     resolution_dict = {}
     if len(instruments)>0:
         if len(instruments) != len(data_dict.keys()):
@@ -454,7 +465,7 @@ def process_model(resultx, resulty, data_dict=None, conv_dict=None, config=None,
     -------
     dict
         Dictionary with keys from data_dict (or 'model' if data_dict is None) 
-        containing lists of [x, y] of processed/binned model.
+        containing lists of [x, y, mask] of processed/binned model.
     """
     config = config or {}
     conv_dict = conv_dict or {}
@@ -504,15 +515,25 @@ def process_model(resultx, resulty, data_dict=None, conv_dict=None, config=None,
             else:
                 rebinned = spectres.spectres(xdata,resultx, resulty)
             
-            returns[obs_key] = [xdata, rebinned]
+            mask = np.isnan(rebinned)
+            if np.any(mask):
+                warnings.warn(f"Created {np.sum(mask)} NaNs out of {len(rebinned)} model points for {obs_key}", UserWarning)
+
+            returns[obs_key] = [xdata, rebinned, mask]
     else:
         #only used if data_dict is not supplied 
         #otherwise it always returns the model on the data grid. 
         if regrid_R is not None:
             x_regrid, y_regrid = mean_regrid(resultx, resulty, R=regrid_R)
-            returns['model'] = [x_regrid, y_regrid]
+            mask = np.isnan(y_regrid)
+            if np.any(mask):
+                warnings.warn(f"Created {np.sum(mask)} NaNs out of {len(y_regrid)} model points for model", UserWarning)
+            returns['model'] = [x_regrid, y_regrid, mask]
         else:
-            returns['model'] = [resultx, resulty]
+            mask = np.isnan(resulty)
+            if np.any(mask):
+                warnings.warn(f"Created {np.sum(mask)} NaNs out of {len(resulty)} model points for model", UserWarning)
+            returns['model'] = [resultx, resulty, mask]
 
     return returns
 
@@ -541,17 +562,19 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True,CON
 
     Returns
     -------
-    dict
+    y_model : dict
         Dictionary with the same keys as observation data. 
         Each value is an array with shape:
-          - (len(xdata),) if input was 1D
-          - (N_samples, len(xdata)) if input was 2D
+          - (N_samples, len(xdata))
+    y_mask : dict
+        Dictionary with same keys as y_model. Boolean masks (True where model is NaN).
     """
     cube = np.atleast_2d(cube)  # ensure shape (N_samples, N_params)
     n_samples = cube.shape[0]
 
     # initialize storage based on data dict keys (basename of filenames)
     y_model = {key: [] for key in DATA_DICT.keys()}
+    y_mask = {key: [] for key in DATA_DICT.keys()}
 
     if not retrieval:
         profiles={}                                   
@@ -587,6 +610,7 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True,CON
         # rebin to observed wavelengths
         for obs_key in DATA_DICT.keys():
             y_model[obs_key].append(processed_outputs[obs_key][1])
+            y_mask[obs_key].append(processed_outputs[obs_key][2])
 
         if not retrieval:
             profiles[j]=picaso_class.inputs['atmosphere']['profile']
@@ -594,14 +618,15 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True,CON
     # stack results into arrays
     for obs_key in y_model:
         y_model[obs_key] = np.vstack(y_model[obs_key])
+        y_mask[obs_key] = np.vstack(y_mask[obs_key])
         # if single sample, flatten to 1D
         # if n_samples == 1:
         #     y_model[obs_key] = y_model[obs_key][0]
 
     if retrieval:
-        return y_model
+        return y_model, y_mask
     else:
-        return y_model, profiles
+        return y_model, y_mask, profiles
 
 def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT={}):
     """
@@ -626,7 +651,7 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
     n_samples = cube.shape[0]
 
     # Compute model spectra for all samples
-    y_model_dict = MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT,CONV_DICT=CONV_DICT)
+    y_model_dict, y_mask_dict = MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT,CONV_DICT=CONV_DICT)
 
     logls = []
 
@@ -635,10 +660,12 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
         ymod_all = []
         sigma_all = []
         extra_term_all = []
+        mask_all = []
 
         for key in DATA_DICT.keys():
             xdata, ydata, edata = DATA_DICT[key]
             y_model = y_model_dict[key][j].copy()   # pick j-th sample
+            y_mask = y_mask_dict[key][j]
             ydata_ = ydata
             calc_type = OBSERVATION_CALC_MAP.get(config['observation_type'])
 
@@ -666,11 +693,19 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
             ymod_all.append(y_model)
             sigma_all.append(sigma)
             extra_term_all.append(extra_term)
+            mask_all.append(y_mask)
 
         ydat_all = np.concatenate(ydat_all)
         ymod_all = np.concatenate(ymod_all)
         sigma_all = np.concatenate(sigma_all)
         extra_term_all = np.concatenate(extra_term_all)
+        mask_all = np.concatenate(mask_all)
+
+        # mask all nans before computing the logl
+        ydat_all = ydat_all[~mask_all]
+        ymod_all = ymod_all[~mask_all]
+        sigma_all = sigma_all[~mask_all]
+        extra_term_all = extra_term_all[~mask_all]
 
         logl = -0.5 * np.sum((ydat_all - ymod_all) ** 2 / sigma_all + extra_term_all)
         logls.append(logl)
@@ -978,7 +1013,7 @@ def check_model_samples(config, N=100, samples=None):
 
     DATA_DICT,CONV_DICT = get_data(config)
 
-    models, profiles = MODEL(thetas[:N], fitpars, config, OPA, param_tools, DATA_DICT, retrieval=False,CONV_DICT=CONV_DICT)
+    models, masks, profiles = MODEL(thetas[:N], fitpars, config, OPA, param_tools, DATA_DICT, retrieval=False,CONV_DICT=CONV_DICT)
 
     return models, thetas, profiles
 

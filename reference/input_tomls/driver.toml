@@ -27,7 +27,7 @@ radius    = {value=1.2, unit='Rjup'}
 mass      = {value=1.2, unit='Mjup'}
 gravity   = {value=1e5, unit='cm/s**2'}
 distance  = {value=8.3,  unit='parsec'}
-teff      = {value=5400, unit='Kelvin'}
+teff      = {value=540, unit='Kelvin'}
 teq       = {value=500, unit='Kelvin'}
 
 [geometry]

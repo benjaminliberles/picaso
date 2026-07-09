@@ -662,6 +662,26 @@ def render_wavelength_range(opacity):
 
 def render_spectral_resolution():
     return st.number_input('Spectral Resolution', min_value=10, value=150)
+
+def get_nan_ranges(wvl, mask):
+    """
+    Finds contiguous NaN wavelength ranges for processed model so that user can make sure 
+    they are okay with the nans that exist in the processed data.
+    """
+    if not np.any(mask):
+        return []
+    
+    nan_indices = np.where(mask)[0]
+    ranges = []
+    if len(nan_indices) > 0:
+        start_idx = nan_indices[0]
+        for i in range(1, len(nan_indices)):
+            if nan_indices[i] != nan_indices[i-1] + 1:
+                ranges.append((wvl[start_idx], wvl[nan_indices[i-1]]))
+                start_idx = nan_indices[i]
+        ranges.append((wvl[start_idx], wvl[nan_indices[-1]]))
+    return ranges
+
 # ---------------------------------#
 # RUN A SPECTRUM ----------------- #
 # ---------------------------------#
@@ -687,7 +707,14 @@ def run_spectrum():
                                          config=clean_dict, 
                                          regrid_R=spectral_resolution)
             
-            wavenumber, albedo_or_fluxes = processed['model']
+            wavenumber, albedo_or_fluxes, mask = processed['model']
+
+            if np.any(mask):
+                nan_count = np.sum(mask)
+                total_count = len(mask)
+                nan_ranges = get_nan_ranges(1e4/wavenumber, mask)
+                range_str = ", ".join([f"{r[0]:.2f}-{r[1]:.2f} um" if r[0] != r[1] else f"{r[0]:.2f} um" for r in nan_ranges])
+                st.warning(f"Warning: Encoutered {nan_count} NaNs out of {total_count} model points. NaN wavelength ranges: {range_str}")
 
             spec_fig = jpi.spectrum(wavenumber, albedo_or_fluxes, plot_width=500, x_range=wavelength_range)
             
@@ -944,7 +971,9 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
         
         WNO_LIST = []
         ALB_LIST = []
-        for prior_toml in ALL_TOMLS:
+
+
+        for idx, prior_toml in enumerate(ALL_TOMLS):
             clean_dict = clean_dictionary(prior_toml)
             df = go.run(driver_dict=clean_dict)
             obs_key = prior_toml['observation_type']
@@ -957,17 +986,36 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
 
             # Aggregate all observations if multiple exist
             for key in processed:
-                WNO_LIST.append(processed[key][0])
-                ALB_LIST.append(processed[key][1])
+                x,y,e = DATA_DICT[key]
+                x_rebinned, y_rebinned, mask = processed[key]
+                valid = ~mask
+                mockliklihood = np.sum((y[valid]**2-y_rebinned[valid]**2)/e[valid]**2)
+                if np.isnan(mockliklihood):
+                    lolg_nan+=1
+
+                WNO_LIST.append(x_rebinned)
+                ALB_LIST.append(y_rebinned)
+
+                if np.any(mask):
+                    nan_count = np.sum(mask)
+                    total_count = len(mask)
+                    nan_ranges = get_nan_ranges(1e4/x_rebinned, mask)
+                    range_str = ", ".join([f"{r[0]:.2f}-{r[1]:.2f} um" if r[0] != r[1] else f"{r[0]:.2f} um" for r in nan_ranges])
+
+
+                if np.any(mask) and np.isnan(mockliklihood):
+                    st.warning(f'Sample {idx+1}: Tried masking {nan_count} points out of {total_count} model points but NaN still persisting in mock likelihood for {key}. Masked points are here: {range_str}')
+                elif np.any(mask) and not np.isnan(mockliklihood):
+                    st.warning(f'Sample {idx+1}: Masked {nan_count} points out of {total_count} model points but with the mask I can successful compute a likelihood for {key}. Masked points are here: {range_str}')
 
         spectrum_fig = jpi.spectrum(WNO_LIST, ALB_LIST, palette=[(255,0,0,0.3)], plot_width=500,x_range=wavelength_range)
         
         for i in DATA_DICT.keys(): 
             x,y,e = DATA_DICT[i]
             spectrum_fig = jpi.plot_errorbar(1e4/x,y,e,plot=spectrum_fig)
-            mockliklihood = np.sum((y**2-processed[i][1]**2)/e**2)
-            if np.isnan(mockliklihood):
-                st.warning(rf'NaNs encountered in simple chi-sq for {i}')
+            _, y_rebinned, mask = processed[i]
+            # mask all nans before computing chi-sq
+
     return pressure_temperature_fig, mixing_ratio_bokeh_fig, clouds_fig, spectrum_fig
 
 def render_additional_retrieval_parameters(parameter_dict, config):
@@ -1058,16 +1106,20 @@ def render_retrievals(spectrum_figure=None):
 
                 clean_dict = clean_dictionary(config)
                 observation_key = config['observation_type']
-                df = st.session_state['df']
+                df = st.session_state['spectrum_results']['df']
                 resultx, resulty = df['wavenumber'] , df[observation_key]
             
                 processed = go.process_model(resultx, resulty, 
+                                             data_dict=data_dict,conv_dict=conv_dict,
                                          config=clean_dict)
                 x,y,l = [],[],[]
                 for i in processed.keys(): 
-                    x+=[processed[i][0]]
-                    y+=[processed[i][1]]
+                    x_rebinned, y_rebinned, mask = processed[i]
+                    x+=[x_rebinned]
+                    y+=[y_rebinned]
                     l+=[i]
+                    if np.any(mask):
+                        st.warning(f"Reference model binned to {i} data grid encountered {np.sum(mask)} NaNs out of {len(y_rebinned)} points.")
 
                 basefig = jpi.spectrum(x, y, 
                                        plot_width=500, 
