@@ -287,7 +287,11 @@ def setup_config():
 
 def render_admin():
     # DATAPATH ENTERING
-    config['OpticalProperties']['opacity_file'] = st.text_input("Enter in the datapath to your opacities.db", value = config.get('OpticalProperties').get('opacity_file').replace('_default_',PICASO_REFDATA_ENV_VAR))
+    check_default_opa = config.get('OpticalProperties').get('opacity_file','')
+    if '_default_' in check_default_opa: 
+        opa = jdi.opannection()
+        default_opa = opa.db_filename
+    config['OpticalProperties']['opacity_file'] = st.text_input("Enter in the datapath to your opacities.db", value = default_opa)
     config['OpticalProperties']['opacity_method'] = st.selectbox("Opacity method", ("resampled")) #, "preweighted", "resortrebin"))
     config['OpticalProperties']['virga_mieff'] = st.text_input("Enter in the datapath to your virga files", value = config.get('OpticalProperties').get('virga_mieff').replace('_default_',PICASO_REFDATA_ENV_VAR))
 
