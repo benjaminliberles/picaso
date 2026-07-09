@@ -965,7 +965,9 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
         for i in DATA_DICT.keys(): 
             x,y,e = DATA_DICT[i]
             spectrum_fig = jpi.plot_errorbar(1e4/x,y,e,plot=spectrum_fig)
-    
+            mockliklihood = np.sum((y**2-processed[i][1]**2)/e**2)
+            if np.isnan(mockliklihood):
+                st.warning(rf'NaNs encountered in simple chi-sq for {i}')
     return pressure_temperature_fig, mixing_ratio_bokeh_fig, clouds_fig, spectrum_fig
 
 def render_additional_retrieval_parameters(parameter_dict, config):

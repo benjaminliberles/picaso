@@ -14,6 +14,7 @@ import sys
 from schwimmbad import MPIPool
 dynesty.utils.pickle_module = dill
 from astropy.io import fits
+import spectres
 
 #all these come from justdoit
 #import os
@@ -499,9 +500,9 @@ def process_model(resultx, resulty, data_dict=None, conv_dict=None, config=None,
                 wno_inst, R_conv = jwst_instrument_conv_from_file
                 # raise Exception('This is not fully tested... Need to enable this before proceeding')
                 rebinned_to_inst = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), 1e4/wno_inst)
-                _, rebinned = mean_regrid(wno_inst, rebinned_to_inst, newx=xdata)
+                rebinned = spectres.spectres(xdata,wno_inst, rebinned_to_inst)
             else:
-                _, rebinned = mean_regrid(resultx, resulty, newx=xdata)
+                rebinned = spectres.spectres(xdata,resultx, resulty)
             
             returns[obs_key] = [xdata, rebinned]
     else:
