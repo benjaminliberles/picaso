@@ -829,7 +829,11 @@ def render_free_parameter_selection():
                 new_clouds[k] = cloud_type
                 new_clouds[cloud_id] = {cloud_type: config['clouds'][cloud_id][cloud_type]}
         config['clouds'] = new_clouds
-    del config['retrieval']
+    if 'retrieval' in config:
+        st.session_state['priors_from_config'] = copy.deepcopy(config['retrieval'])
+        del config['retrieval']
+    else:
+        st.session_state['priors_from_config'] = None
 
     def list_available_free_parameters(data, current_path=""):
         for key, value in data.items():
@@ -847,31 +851,119 @@ def render_free_parameter_selection():
     list_available_free_parameters(config)
     return parameter_handler
 
+
+def find_prior_for_key(priors, key):
+    """
+    Looks up a parameter's prior configuration in the provided retrieval dictionary.
+    Supports both flat string-path keys and nested dictionary configurations, and handles
+    cloud name differences (e.g. cloud1 vs generic cloud).
+    """
+    if not priors:
+        return None
+    
+    # 1. Exact match in flat priors (e.g., priors["object.radius"])
+    if key in priors:
+        return priors[key]
+    
+    # 2. Nested dictionary lookups (e.g., priors["object"]["radius"])
+    parts = key.split('.')
+    current = priors
+    found = True
+    for part in parts:
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            found = False
+            break
+    if found and isinstance(current, dict) and ('prior' in current or 'type' in current or 'uniform_kwargs' in current or 'gaussian_kwargs' in current):
+        return current
+
+    # 3. Fallback: try removing cloud identifiers (e.g. "clouds.cloud1.slab-grey.ptop" -> "clouds.slab-grey.ptop")
+    import re
+    simplified_key = re.sub(r'clouds\.cloud\d+\.', 'clouds.', key)
+    if simplified_key != key:
+        if simplified_key in priors:
+            return priors[simplified_key]
+        
+        parts = simplified_key.split('.')
+        current = priors
+        found = True
+        for part in parts:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                found = False
+                break
+        if found and isinstance(current, dict) and ('prior' in current or 'type' in current or 'uniform_kwargs' in current or 'gaussian_kwargs' in current):
+            return current
+            
+    return None
+
+
 def render_ranges_for_selected_parameters(parameter_handler):
     # filter for what items have been selected
     prior_set_items = {}
     selected_items = {path_to_parameter: state_value_list[1] for path_to_parameter, state_value_list in parameter_handler.items() if state_value_list[0]}
 
+    priors_cfg = st.session_state.get('priors_from_config')
+
     # Min, Max, Log, Prior Type Listing
     # Right Now not swapping out Gaussian Kwargs for Uniform Kwargs...
     for i, (key, value) in enumerate(selected_items.items()):
         st.subheader(key)
-        prior_type = st.selectbox('prior', ['uniform', 'gaussian'], key=f'prior{i}')
+
+        p_dict = find_prior_for_key(priors_cfg, key) if priors_cfg else None
+
+        p_type = 'uniform'
+        log_val = False
+        min_val = None
+        max_val = None
+        mean_val = None
+        std_val = None
+
+        if p_dict and isinstance(p_dict, dict):
+            p_type = p_dict.get('prior') or p_dict.get('type') or 'uniform'
+            log_val = p_dict.get('log', False)
+            
+            # Extract uniform values if present
+            uni_kwargs = p_dict.get('uniform_kwargs') or p_dict.get('uniform_options') or {}
+            min_val = uni_kwargs.get('min') if 'min' in uni_kwargs else p_dict.get('min')
+            max_val = uni_kwargs.get('max') if 'max' in uni_kwargs else p_dict.get('max')
+            
+            # Extract gaussian values if present
+            gauss_kwargs = p_dict.get('gaussian_kwargs') or p_dict.get('gaussian_options') or {}
+            mean_val = gauss_kwargs.get('mean') if 'mean' in gauss_kwargs else p_dict.get('mean')
+            std_val = gauss_kwargs.get('std') if 'std' in gauss_kwargs else p_dict.get('std')
+
+        if p_type not in ['uniform', 'gaussian']:
+            p_type = 'uniform'
+
+        prior_type_index = 0 if p_type == 'uniform' else 1
+
+        prior_type = st.selectbox('prior', ['uniform', 'gaussian'], index=prior_type_index, key=f'prior{i}')
         prior_set_items[key] = dict(
-            log=st.text_input('log', False, key=f'log{i}'),
+            log=st.text_input('log', log_val, key=f'log{i}'),
             prior=prior_type
         )
         # if value == 0:
         #     value = 0.00001
         if prior_type == 'uniform':
-            prior_set_items[key][f'{prior_type}_kwargs'] =dict(
-                min=st.number_input('min', value=value*0.75, min_value=None, max_value=None, key=f'min{i}', format="%.6f"),
-                max=st.number_input('max', value=value*1.25, min_value=None, max_value=None, key=f'max{i}', format="%.6f"),
+            if min_val is None:
+                min_val = value * 0.75
+            if max_val is None:
+                max_val = value * 1.25
+            prior_set_items[key][f'{prior_type}_kwargs'] = dict(
+                min=st.number_input('min', value=float(min_val), min_value=None, max_value=None, key=f'min{i}', format="%.6f"),
+                max=st.number_input('max', value=float(max_val), min_value=None, max_value=None, key=f'max{i}', format="%.6f"),
             )
         else:
-            prior_set_items[key][f'{prior_type}_kwargs'] =dict(
-                mean=st.number_input('mean', value, key=f'mean{i}'),
-                std=st.number_input('std', 1, key=f'std{i}'),
+            if mean_val is None:
+                mean_val = value
+            if std_val is None:
+                std_val = 1.0
+            prior_set_items[key][f'{prior_type}_kwargs'] = dict(
+                mean=st.number_input('mean', float(mean_val), key=f'mean{i}'),
+                std=st.number_input('std', float(std_val), key=f'std{i}'),
             )
     return prior_set_items
 
