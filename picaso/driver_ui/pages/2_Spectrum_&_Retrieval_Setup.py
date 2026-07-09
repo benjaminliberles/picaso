@@ -116,6 +116,16 @@ def write_results_to_config(grid, base):
             else:
                 base[item] = grid[item][0]
 
+def update_config_recursively(base, user_defaults):
+    """
+    Recursively updates the base configuration dictionary with the user defaults.
+    """
+    for key, val in user_defaults.items():
+        if key in base and isinstance(base[key], dict) and isinstance(val, dict):
+            update_config_recursively(base[key], val)
+        else:
+            base[key] = copy.deepcopy(val)
+
 def clean_dictionary(data, suffix="_options"):
     """
     Recursively removes a certain keyword from any part of a dictionary (used to clean the driver.toml configuration of _options keywords before getting passed to a PICASO function). 
@@ -267,20 +277,13 @@ opacity = None
 # ADMINISTRATIVE CONFIGURATION
 # ============================================
 def setup_config():
-    if st.selectbox('Do you want to upload or provide the datapath to driver.toml?', ['Datapath', 'Upload']) == 'Upload':
-        uploaded_file = st.file_uploader("Choose a TOML config file", type="toml")
-        if uploaded_file is not None:
-            uploaded_config = tomllib.load(uploaded_file)
-            if uploaded_config_is_valid(uploaded_config):
-                return uploaded_config
-    else:
-        # dynamically finds a driver.toml in the below datapath platform independently
-        # DRIVER_CONFIG = "/Users/sjanson/Desktop/code/picaso/reference/input_tomls/driver.toml"
-        DRIVER_CONFIG = os.path.join(os.environ['picaso_refdata'],'input_tomls','driver.toml')
-        st.text_input('Enter path to driver.toml', value=DRIVER_CONFIG)
-        if isinstance(DRIVER_CONFIG, str):
+    picaso_ref = os.environ.get('picaso_refdata')
+    if picaso_ref and picaso_ref != 'None' and os.path.isdir(picaso_ref):
+        DRIVER_CONFIG = os.path.join(picaso_ref, 'input_tomls', 'driver.toml')
+        if os.path.exists(DRIVER_CONFIG):
             with open(DRIVER_CONFIG, "rb") as f:
-                return tomllib.load(f) 
+                return tomllib.load(f)
+    return None
 
 def render_admin():
     # DATAPATH ENTERING
@@ -304,6 +307,15 @@ def render_admin():
 
     # CALCULATION TYPE AND OBSERVATION TYPE SETTING
     st.subheader('Select calculation to perform')
+    
+    upload_option = st.radio("Would you like to upload a toml file to set default values?", ("No", "Yes"), index=0)
+    if upload_option == "Yes":
+        uploaded_file = st.file_uploader("Choose a TOML file with default values", type="toml")
+        if uploaded_file is not None:
+            uploaded_config = tomllib.load(uploaded_file)
+            update_config_recursively(config, uploaded_config)
+            st.success("Successfully loaded user-provided default values.")
+
     calc_type = config.get('calc_type','spectrum')
 
     #config['calc_type'] = st.selectbox("Calculation type", ['spectrum','climate'], index=None)
@@ -326,6 +338,9 @@ def render_star():
     if config['observation_type'] == 'thermal':
         choice = st.selectbox("Do your want your object to be irradiated?", ('Yes', 'No'), index=None)
         config['irradiated'] = choice == 'Yes'
+    if not config['irradiated']:
+        if 'star' in config: 
+            del config['star']
     # EDITABLE STAR VARIABLES SECTION
     if config['irradiated']:
         st.subheader("Star Variables")
@@ -1253,32 +1268,34 @@ d.go(current_config_filename)""")
 # MAIN
 # =========================== 
 config = setup_config()
-if config is None: st.error('Cannot find driver.toml file')
-opacity, param_tools = render_admin()
-if config['observation_type']:
-    render_star()
-    render_object()
-    render_phase_angle()
+if config is None:
+    st.error('Cannot find driver.toml file. Please ensure that os.environ[\'picaso_refdata\'] is set correctly in the Administrative section or on the Reference Data page.')
+else:
+    opacity, param_tools = render_admin()
+    if config['observation_type']:
+        render_star()
+        render_object()
+        render_phase_angle()
 
-    # ATMOSPHERIC VARIABLES
-    st.subheader("Atmospheric Variables")
-    render_pressure_and_temperature()
-    render_chemistry()
-    render_clouds()
+        # ATMOSPHERIC VARIABLES
+        st.subheader("Atmospheric Variables")
+        render_pressure_and_temperature()
+        render_chemistry()
+        render_clouds()
 
-    #VELOCITIES (doppler and/or rotational)
-    render_velocities()
+        #VELOCITIES (doppler and/or rotational)
+        render_velocities()
 
 
-    # SPECTRUM
-    wavelength_range = render_wavelength_range(opacity)
-    spectral_resolution = render_spectral_resolution()
-    spec_figure = run_spectrum()
-        
-    # RETRIEVALS
-    retrieval_object = {}
-    st.header("Retrievals")
-    if st.selectbox("Do you want to do a retrieval?", ('Yes', 'No'), index=None) == 'Yes':
-        retrieval_object = render_retrievals(spectrum_figure=spec_figure)
+        # SPECTRUM
+        wavelength_range = render_wavelength_range(opacity)
+        spectral_resolution = render_spectral_resolution()
+        spec_figure = run_spectrum()
+            
+        # RETRIEVALS
+        retrieval_object = {}
+        st.header("Retrievals")
+        if st.selectbox("Do you want to do a retrieval?", ('Yes', 'No'), index=None) == 'Yes':
+            retrieval_object = render_retrievals(spectrum_figure=spec_figure)
 
-    render_download_config(retrieval_object)
+        render_download_config(retrieval_object)
