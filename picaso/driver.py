@@ -9,6 +9,7 @@ import shutil
 from collections.abc import Mapping
 from scipy import stats
 import dill
+import dynesty
 import dynesty.utils
 from functools import partial
 import sys
@@ -945,11 +946,21 @@ def retrieve(config, param_tools):
                   OPA=OPA, param_tools=param_tools, DATA_DICT=DATA_DICT,CONV_DICT=CONV_DICT)
     
 
-    # Dynamic pool allocation using choose_pool
-    with choose_pool(mpi=mpi, processes=processes) as pool:
+    import contextlib
+
+    @contextlib.contextmanager
+    def maybe_pool(mpi, processes):
+        if not mpi and processes == 1:
+            yield None
+        else:
+            with choose_pool(mpi=mpi, processes=processes) as pool:
+                yield pool
+
+    # Dynamic pool allocation using maybe_pool
+    with maybe_pool(mpi, processes) as pool:
         
         # If MPI is selected, worker nodes must wait here
-        if mpi and hasattr(pool, 'is_master') and not pool.is_master():
+        if mpi and pool is not None and hasattr(pool, 'is_master') and not pool.is_master():
             pool.wait()
             sys.exit(0)
             
@@ -959,7 +970,7 @@ def retrieve(config, param_tools):
         sampler_args = prior_config['sampler']['sampler_kwargs']
         
         #fallback for SerialPool or single-process pools which don't use pool.size
-        pool_size = getattr(pool, 'size', 1)
+        pool_size = getattr(pool, 'size', 1) if pool is not None else 1
         sampler_args.setdefault('queue_size', pool_size)
         
         run_args = prior_config['sampler']['run_kwargs']
