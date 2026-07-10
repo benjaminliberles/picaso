@@ -692,9 +692,6 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
 
             sigma = edata**2 + err_inf
 
-            should_add_extras = len(offset_dict)+len(scaling_dict)+len(err_inf_dict)
-            assert should_add_extras == added_extras, 'The number of added offsets, scalings or error inflations does not match occurances in config file'
-
             extra_term = np.log(2 * np.pi * sigma)
 
             ydat_all.append(ydata_)
@@ -702,6 +699,11 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
             sigma_all.append(sigma)
             extra_term_all.append(extra_term)
             mask_all.append(y_mask)
+
+        # check added vals after going through all data instnaces 
+        should_add_extras = len(offset_dict)+len(scaling_dict)+len(err_inf_dict)
+        assert should_add_extras == added_extras, 'The number of added offsets, scalings or error inflations does not match occurances in config file'
+
 
         ydat_all = np.concatenate(ydat_all)
         ymod_all = np.concatenate(ymod_all)
