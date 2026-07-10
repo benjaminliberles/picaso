@@ -902,6 +902,75 @@ def _resume_check_config(config):
     check.get('retrieval', {}).get('sampler', {}).pop('resume', None)
     return check
 
+SAMPLER_REGISTRY = {}
+
+def register_sampler(name):
+    def decorator(func):
+        SAMPLER_REGISTRY[name.lower()] = func
+        return func
+    return decorator
+
+@register_sampler('dynesty')
+def run_dynesty(config, loglike_fn, hypercube_fn, ndims, pool, prior_config):
+    checkpoint_file = config['InputOutput']['retrieval_output']+'/dynesty.save'
+    sampler_args = prior_config['sampler']['sampler_kwargs'].copy()
+    
+    #fallback for SerialPool or single-process pools which don't use pool.size
+    pool_size = getattr(pool, 'size', 1) if pool is not None else 1
+    sampler_args.setdefault('queue_size', pool_size)
+    
+    run_args = prior_config['sampler']['run_kwargs']
+    prior_config['sampler']['resume'] = prior_config['sampler'].get('resume', False)
+    
+    if prior_config['sampler']['resume']:
+        print('Resuming retrieval...')
+        sampler = dynesty.NestedSampler.restore(checkpoint_file, pool=pool)
+        resume = True
+    else:
+        sampler = dynesty.NestedSampler(loglike_fn, hypercube_fn, ndims, pool=pool, **sampler_args) 
+        resume = False
+
+    sampler.run_nested(checkpoint_file=checkpoint_file,
+                       resume=resume,
+                       **run_args)
+    return sampler
+
+@register_sampler('ultranest')
+def run_ultranest(config, loglike_fn, hypercube_fn, ndims, pool, prior_config):
+    import ultranest
+    fitpars = prior_finder(prior_config)
+    param_names = list(fitpars.keys())
+    
+    log_dir = config['InputOutput']['retrieval_output']
+    
+    sampler_args = prior_config['sampler'].get('sampler_kwargs', {}).copy()
+    run_args = prior_config['sampler'].get('run_kwargs', {}).copy()
+    
+    resume_val = prior_config['sampler'].get('resume', False)
+    resume = 'resume' if resume_val else 'overwrite'
+    
+    sampler = ultranest.ReactiveNestedSampler(
+        param_names,
+        loglike_fn,
+        transform=hypercube_fn,
+        log_dir=log_dir,
+        resume=resume,
+        **sampler_args
+    )
+    
+    sampler.run(**run_args)
+    return sampler
+
+def check_resume_exists(code, retrieval_output):
+    if code.lower() == 'dynesty':
+        checkpoint_file = os.path.join(retrieval_output, 'dynesty.save')
+        return os.path.exists(checkpoint_file)
+    elif code.lower() == 'ultranest':
+        checkpoint_file = os.path.join(retrieval_output, 'results', 'points.hdf5')
+        return os.path.exists(checkpoint_file)
+    else:
+        return False
+
 def retrieve(config, param_tools):
 
     OPA = opannection(
@@ -922,11 +991,13 @@ def retrieve(config, param_tools):
     processes = config['retrieval'].get('processes',int(os.cpu_count()/2))
 
 
-    checkpoint_file = config['InputOutput']['retrieval_output']+'/dynesty.save'
-    input_file = config['InputOutput']['retrieval_output']+'/inputs.toml'
-    if prior_config['sampler']['resume']:
-        if not os.path.exists(checkpoint_file):
-            raise FileNotFoundError(f"Cannot resume retrieval; checkpoint does not exist: {checkpoint_file}")
+    code = prior_config.get('sampler', {}).get('code', 'dynesty')
+    retrieval_output = config['InputOutput']['retrieval_output']
+    input_file = os.path.join(retrieval_output, 'inputs.toml')
+    
+    if prior_config['sampler'].get('resume', False):
+        if not check_resume_exists(code, retrieval_output):
+            raise FileNotFoundError(f"Cannot resume retrieval; checkpoint/resume file does not exist for {code} in: {retrieval_output}")
         if not os.path.exists(input_file):
             raise FileNotFoundError(f"Cannot verify resume config; original inputs file does not exist: {input_file}")
         with open(input_file, "rb") as f:
@@ -966,29 +1037,11 @@ def retrieve(config, param_tools):
             
         print('Running retrieval...')
 
-        #doing dynesty but this should be generic
-        sampler_args = prior_config['sampler']['sampler_kwargs']
+        sampler_func = SAMPLER_REGISTRY.get(code.lower())
+        if sampler_func is None:
+            raise ValueError(f"Sampler '{code}' is not supported. Supported samplers are: {list(SAMPLER_REGISTRY.keys())}")
         
-        #fallback for SerialPool or single-process pools which don't use pool.size
-        pool_size = getattr(pool, 'size', 1) if pool is not None else 1
-        sampler_args.setdefault('queue_size', pool_size)
-        
-        run_args = prior_config['sampler']['run_kwargs']
-        prior_config['sampler']['resume'] = prior_config['sampler'].get('resume', False)
-        
-        if prior_config['sampler']['resume']:
-            print('Resuming retrieval...')
-            sampler = dynesty.NestedSampler.restore(checkpoint_file, pool=pool)
-            resume = True
-        else:
-            # sampler = dynesty.DynamicNestedSampler(loglike_fn, hypercube_fn, ndims, pool=pool, **sampler_args)
-            sampler = dynesty.NestedSampler(loglike_fn, hypercube_fn, ndims, pool=pool, **sampler_args) 
-            resume = False
-
-        sampler.run_nested(checkpoint_file=checkpoint_file,
-                           resume=resume,
-                           **run_args)
-        
+        sampler = sampler_func(config, loglike_fn, hypercube_fn, ndims, pool, prior_config)
         return sampler
 
 def check_model_samples(config, N=100, samples=None):

@@ -1272,7 +1272,7 @@ def render_retrievals(spectrum_figure=None):
 
     retrieval_object['sampler']={}
 
-    code_options = retrieval_object.get('sampler',{}).get('code_options',['dynesty'])
+    code_options = retrieval_object.get('sampler',{}).get('code_options',['dynesty', 'ultranest'])
 
     retrieval_object['sampler']['code'] =  st.selectbox("Choose bayesian code to use", code_options, index=None)
 
