@@ -173,7 +173,7 @@ def run_spectrum_class(stage=None):
     """
     return go.setup_spectrum_class(clean_dictionary(config), opacity, param_tools, stage)
 
-def update_toml_with_a_value_for_a_free_parameter(dictionary, keys, value):
+def update_toml_with_a_value_for_a_free_parameter_deprecate(dictionary, keys, value):
     """
     Write a sampled value to a new copy of the main configuration file, used for retrievals
         
@@ -977,15 +977,18 @@ def sampler(prior_set_items, nsamples):
     for _ in range(nsamples):
         # get samples for values
         check_all_values = go.hypercube(np.random.rand(len(prior_set_items.keys())), dict(prior_set_items))
+        
         # create a new copy of the config to write to
         GUESS_TOML = copy.deepcopy(config)
         # write sampled values to config
-        for index, free_parameter in enumerate(prior_set_items.keys()):
-            if any(free_parameter.startswith(s) for s in ['err_inf', 'offset', 'scaling']):
-                continue
-            sampled_value = check_all_values[index]
-            keys = free_parameter.split('.')
-            update_toml_with_a_value_for_a_free_parameter(GUESS_TOML, keys, sampled_value)
+        #for index, free_parameter in enumerate(prior_set_items.keys()):
+        #    if any(free_parameter.startswith(s) for s in ['err_inf', 'offset', 'scaling']):
+        #        continue
+        #    sampled_value = check_all_values[index]
+        #    keys = free_parameter.split('.')
+        #    update_toml_with_a_value_for_a_free_parameter(GUESS_TOML, keys, sampled_value)
+        GUESS_TOML = go.update_config_w_cube(GUESS_TOML, prior_set_items,check_all_values)
+
         # save that config
         ALL_TOMLS.append(GUESS_TOML)
         # run config through spectrum class

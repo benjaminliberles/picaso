@@ -582,12 +582,10 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True,CON
 
     for j,row in enumerate(cube):
         # update parameters
-        for i, key in enumerate(fitpars.keys()):
-            if not (key.startswith("offset") or key.startswith("scaling") or key.startswith("err_inf")):
-                if (key.startswith("object")):
-                    set_dict_value(config, key+'.value', row[i])
-                else:
-                    set_dict_value(config, key, row[i])
+        # change to use function with checker that logs everything being changed 
+        # this will raise except if the changed parameters does not match len fitpars
+        # this only ignores scaling, offset, and err_inf which are handled in loglikelihood function
+        config=update_config_w_cube(config, fitpars,row)
 
         # compute spectrum
         calculation = OBSERVATION_CALC_MAP.get(config['observation_type'],None)
@@ -654,6 +652,10 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
     # Compute model spectra for all samples
     y_model_dict, y_mask_dict = MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT,CONV_DICT=CONV_DICT)
 
+    offset_dict = config.get('retrieval',{}).get('offset',{})
+    err_inf_dict = config.get('retrieval',{}).get('err_inf',{})
+    scaling_dict = config.get('retrieval',{}).get('scaling',{})
+
     logls = []
 
     for j in range(n_samples):
@@ -663,6 +665,7 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
         extra_term_all = []
         mask_all = []
 
+        added_extras = 0 
         for key in DATA_DICT.keys():
             xdata, ydata, edata = DATA_DICT[key]
             y_model = y_model_dict[key][j].copy()   # pick j-th sample
@@ -671,22 +674,26 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
             calc_type = OBSERVATION_CALC_MAP.get(config['observation_type'])
 
             # add offsets
-            if calc_type == 'transmission' and key in config.get("retrieval", {}).get("offset", {}):
+            if key in offset_dict:
                 icube = list(fitpars.keys()).index(f'offset.{key}')
-                y_model += cube[j, icube]
+                y_model += cube[j, icube];added_extras+=1
 
             # add scalings
-            if calc_type == 'thermal' and key in config.get("retrieval", {}).get("scaling", {}):
+            if key in scaling_dict:
                 icube = list(fitpars.keys()).index(f'scaling.{key}')
-                y_model *= cube[j, icube]
+                y_model *= cube[j, icube];added_extras+=1
 
             # add error inflation if exists
-            if key in config.get("retrieval", {}).get("err_inf", {}):
+            if key in err_inf_dict:
                 icube = list(fitpars.keys()).index(f'err_inf.{key}')
-                err_inf = cube[j, icube]
+                err_inf = cube[j, icube];added_extras+=1
             else:
                 err_inf = 0
+
             sigma = edata**2 + err_inf
+
+            should_add_extras = len(offset_dict)+len(scaling_dict)+len(err_inf_dict)
+            assert should_add_extras == added_extras, 'The number of added offsets, scalings or error inflations does not match occurances in config file'
 
             extra_term = np.log(2 * np.pi * sigma)
 
@@ -1255,6 +1262,21 @@ def PT_handler(pt_config, picaso_class, param_tools): #WIP
     
     return pt_df
 
+def update_config_w_cube(config_og, fitpars, cube):
+    """
+    Create function that ensures all parameters are reset 
+    """
+    log_change = [False]*len(fitpars)
+    for i, key in enumerate(fitpars.keys()):
+        if not (key.startswith("offset") or key.startswith("scaling") or key.startswith("err_inf")):
+            log_change[i]=set_dict_value(config_og, key, cube[i])
+        else:  
+            log_change[i]=True#no need to change config
+    
+    if np.sum(log_change) != len(fitpars):
+        raise Exception('Cound not change config parameters ffrom cube for' , np.array(list(fitpars.keys()))[~np.array(log_change)])
+    return config_og
+
 def set_dict_value(data, path_string, new_value):
     """
     Sets the value of a key in a nested dictionary or a 
@@ -1269,14 +1291,14 @@ def set_dict_value(data, path_string, new_value):
         
         if is_last_key:
             # Case 1: Final target is a dictionary key
-            if isinstance(current_level, dict):
+            if isinstance(current_level, (dict,pd.DataFrame)):
                 current_level[key] = new_value
                 return True
             
-            # Case 2: Final target is a DataFrame column
-            elif isinstance(current_level, pd.DataFrame):
+            # Case 2: Final target is a list for intsances where we are editting a list like knots 
+            elif isinstance(current_level, list):
                 # This replaces the entire column with the new_value
-                current_level[key] = new_value
+                current_level[int(key)] = new_value
                 return True
             
             else:
