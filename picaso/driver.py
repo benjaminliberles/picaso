@@ -12,7 +12,7 @@ import dill
 import dynesty.utils
 from functools import partial
 import sys
-from schwimmbad import MPIPool
+from schwimmbad import MPIPool,choose_pool
 dynesty.utils.pickle_module = dill
 from astropy.io import fits
 import spectres
@@ -910,6 +910,17 @@ def retrieve(config, param_tools):
         )
     
     prior_config=config['retrieval']
+
+    #if it isn't specified just assume its being run on a local machine
+    mpi = config['retrieval'].get('mpi',False)
+    
+    #if it isn't specified just grab half the users cpu 
+    #note processes is not used for mpi = True. 
+    #mpi uses -np instead e.g., mpirun -np 200 python your_script.py
+    #but processes would be effectively equivalent to nodes*cpu
+    processes = config['retrieval'].get('processes',int(os.cpu_count()/2))
+
+
     checkpoint_file = config['InputOutput']['retrieval_output']+'/dynesty.save'
     input_file = config['InputOutput']['retrieval_output']+'/inputs.toml'
     if prior_config['sampler']['resume']:
@@ -933,34 +944,41 @@ def retrieve(config, param_tools):
     loglike_fn = partial(log_likelihood, fitpars=fitpars, config=config,
                   OPA=OPA, param_tools=param_tools, DATA_DICT=DATA_DICT,CONV_DICT=CONV_DICT)
     
-    #pool (MPI for clusters)
-    pool = MPIPool()
-    if not pool.is_master():
-        pool.wait()
-        sys.exit(0)
+
+    # Dynamic pool allocation using choose_pool
+    with choose_pool(mpi=mpi, processes=processes) as pool:
         
-    print('Running retrieval...')
+        # If MPI is selected, worker nodes must wait here
+        if mpi and hasattr(pool, 'is_master') and not pool.is_master():
+            pool.wait()
+            sys.exit(0)
+            
+        print('Running retrieval...')
 
-    #doing dynesty but this should be generic
-    sampler_args = prior_config['sampler']['sampler_kwargs']
-    sampler_args.setdefault('queue_size', pool.size)
-    run_args = prior_config['sampler']['run_kwargs']
-    if prior_config['sampler']['resume']:
-        print('Resuming retrieval...')
-        sampler = dynesty.NestedSampler.restore(checkpoint_file, pool=pool)
-        resume=True
-    else:
-        # sampler = dynesty.DynamicNestedSampler(loglike_fn, hypercube_fn, ndims, pool=pool, **sampler_args)
-        sampler = dynesty.NestedSampler(loglike_fn, hypercube_fn, ndims, pool=pool, **sampler_args) 
-        resume=False
+        #doing dynesty but this should be generic
+        sampler_args = prior_config['sampler']['sampler_kwargs']
+        
+        #fallback for SerialPool or single-process pools which don't use pool.size
+        pool_size = getattr(pool, 'size', 1)
+        sampler_args.setdefault('queue_size', pool_size)
+        
+        run_args = prior_config['sampler']['run_kwargs']
+        prior_config['sampler']['resume'] = prior_config['sampler'].get('resume', False)
+        
+        if prior_config['sampler']['resume']:
+            print('Resuming retrieval...')
+            sampler = dynesty.NestedSampler.restore(checkpoint_file, pool=pool)
+            resume = True
+        else:
+            # sampler = dynesty.DynamicNestedSampler(loglike_fn, hypercube_fn, ndims, pool=pool, **sampler_args)
+            sampler = dynesty.NestedSampler(loglike_fn, hypercube_fn, ndims, pool=pool, **sampler_args) 
+            resume = False
 
-    try:
         sampler.run_nested(checkpoint_file=checkpoint_file,
                            resume=resume,
                            **run_args)
-    finally:
-        pool.close()
-    return sampler
+        
+        return sampler
 
 def check_model_samples(config, N=100, samples=None):
     """
