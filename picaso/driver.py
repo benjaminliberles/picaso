@@ -9,6 +9,7 @@ import shutil
 from collections.abc import Mapping
 from scipy import stats
 import scipy.interpolate as sci
+from scipy.special import erf
 import dill
 import dynesty
 import dynesty.utils
@@ -310,6 +311,10 @@ def get_data(config):
     observations_config = config.get('ObservationData').copy()
     
     instruments = observations_config.pop('instruments', [])
+    filenames = observations_config.get('filenames', [])
+    if isinstance(filenames, str):
+        filenames = [filenames]
+    coord = observations_config.get('coord')
     
     data_dict = parse_data(**observations_config)
 
@@ -324,13 +329,33 @@ def get_data(config):
             data_dict[key] = [wno[~nan_mask], y[nan_mask == False], e[nan_mask == False]]
 
     resolution_dict = {}
+    for filename in filenames:
+        ext = os.path.splitext(filename)[1].lower()
+        if ext in ['.csv', '.txt', '.ascii', '.dat']:
+            continue
+        ds = xr.load_dataset(filename)
+        if 'R' not in ds:
+            continue
+
+        coord_values = ds.coords[coord].values
+        coord_unit = ds.coords[coord].attrs.get('units', observations_config.get('coord_unit'))
+        if coord_unit:
+            wno = convert_to_wavenumber(coord_values, coord_unit)
+        else:
+            wno = 1e4 / coord_values
+
+        sort_indices = np.argsort(wno)
+        name = os.path.splitext(os.path.basename(filename))[0]
+        resolution_dict[name] = (wno[sort_indices], ds['R'].values[sort_indices])
+
     if len(instruments)>0:
         if len(instruments) != len(data_dict.keys()):
             raise Exception("need to input the same number of instrument keys for convolution as filenames. if you plan to use the same instrument for all files then enter multiple entries (e.g., ['jwst nirspec prism','jwst nirspec prism'])")
         else: 
             
             for i,name in enumerate(data_dict.keys()):
-                resolution_dict[name] = get_instrument_R_fits(instruments[i])
+                if name not in resolution_dict:
+                    resolution_dict[name] = get_instrument_R_fits(instruments[i])
         
     # Leaving this out for now until there is rationale 
     # to enforce mapping. For now parse_data will try and 
@@ -379,7 +404,7 @@ def get_data_old(config):
     elif calc_type=='transmission':
         to_fit = 'transit_depth'
 
-    returns = {}
+    returns = {'_R': {}}
     for i,key in enumerate(observations):
         #load observation file
         dat = xr.load_dataset(observations[key])
@@ -396,8 +421,10 @@ def get_data_old(config):
         #     raise Exception("Not a valid unit for coords")
 
         final = pd.DataFrame(dict(x=dat.coords['wavelength'].values,
-	                y=dat.data_vars[to_fit].values,
-	                e=dat.data_vars[to_fit+'_error'].values))
+		                y=dat.data_vars[to_fit].values,
+		                e=dat.data_vars[to_fit+'_error'].values))
+        if 'R' in dat:
+            final['R'] = dat['R'].values
         
         final['micron'] = (dat.coords['wavelength'].values)
         final['wavenumber'] = 1e4/final['micron']
@@ -407,7 +434,9 @@ def get_data_old(config):
 
 	    #return a nice dictionary with the info we need 
         returns[key] = [final['wavenumber'].values, 
-		             final['y'].values, final['e'].values]
+			             final['y'].values, final['e'].values]
+        if 'R' in final:
+            returns['_R'][key] = final['R'].values
         
     return returns
 
@@ -526,9 +555,12 @@ def process_model(resultx, resulty, data_dict=None, conv_dict=None, config=None,
             elif jwst_instrument_conv_from_file:
                 # Note: this was noted as not fully tested in MODEL
                 wno_inst, R_conv = jwst_instrument_conv_from_file
-                # raise Exception('This is not fully tested... Need to enable this before proceeding')
-                rebinned_to_inst = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), 1e4/wno_inst)
-                rebinned = spectres.spectres(xdata,wno_inst, rebinned_to_inst)
+                if len(wno_inst) == len(xdata) and np.allclose(wno_inst, xdata, rtol=1e-8, atol=0.0):
+                    rebinned = convolve_top_hat_rebin_R(1e4/resultx, resulty, 1e4/xdata, np.asarray(R_conv))
+                else:
+                    # raise Exception('This is not fully tested... Need to enable this before proceeding')
+                    rebinned_to_inst = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), 1e4/wno_inst)
+                    rebinned = spectres.spectres(xdata,wno_inst, rebinned_to_inst)
             else:
                 rebinned = spectres.spectres(xdata,resultx, resulty)
             
@@ -876,6 +908,110 @@ def RV(wvl, flux_array, v_array=0.0, edgeHandling='firstlast', fillValue=None):
 def convolver(newx, x, y):
     #
     return y
+
+def top_hat_rebin_R(model_wl, model_flux, obs_wl, R):
+    """
+    Bin-integrate a model spectrum onto observed bins using wavelength-dependent R.
+
+    Each observed point is treated as a top-hat bin centered on obs_wl[i] with
+    width dlambda = obs_wl[i] / R[i]. The returned value is the mean flux over
+    that bin. Output order matches obs_wl.
+    """
+    model_wl = np.asarray(model_wl, dtype=float)
+    model_flux = np.asarray(model_flux, dtype=float)
+    obs_wl = np.asarray(obs_wl, dtype=float)
+    R = np.asarray(R, dtype=float)
+
+    if R.ndim == 0:
+        R = np.full_like(obs_wl, float(R), dtype=float)
+    if R.shape != obs_wl.shape:
+        raise ValueError("R must be scalar or have the same shape as obs_wl")
+
+    order = np.argsort(model_wl)
+    model_wl = model_wl[order]
+    model_flux = model_flux[order]
+
+    trapz = np.trapezoid if hasattr(np, 'trapezoid') else np.trapz
+    rebinned_flux = np.empty_like(obs_wl, dtype=float)
+
+    for i, wl_center in enumerate(obs_wl):
+        width = wl_center / R[i]
+        if not np.isfinite(width) or width <= 0:
+            raise ValueError("R values must be finite and positive")
+
+        lo = wl_center - 0.5 * width
+        hi = wl_center + 0.5 * width
+        inside = (model_wl > lo) & (model_wl < hi)
+        wl_bin = np.concatenate(([lo], model_wl[inside], [hi]))
+        flux_bin = np.interp(wl_bin, model_wl, model_flux)
+        rebinned_flux[i] = trapz(flux_bin, wl_bin) / (hi - lo)
+
+    return rebinned_flux
+
+def _cell_widths(grid):
+    if len(grid) < 2:
+        raise ValueError("model_wl must contain at least two points")
+
+    edges = np.empty(len(grid) + 1, dtype=float)
+    edges[1:-1] = 0.5 * (grid[:-1] + grid[1:])
+    edges[0] = grid[0] - 0.5 * (grid[1] - grid[0])
+    edges[-1] = grid[-1] + 0.5 * (grid[-1] - grid[-2])
+    return np.diff(edges)
+
+def convolve_top_hat_rebin_R(model_wl, model_flux, obs_wl, R, nsigma=5):
+    """
+    Convolve with a wavelength-dependent Gaussian LSF and bin-average onto data.
+
+    For each observed point, R defines both the Gaussian FWHM and the top-hat
+    bin width. The Gaussian-convolved model is analytically averaged over that
+    finite bin using the integrated Gaussian response.
+    """
+    model_wl = np.asarray(model_wl, dtype=float)
+    model_flux = np.asarray(model_flux, dtype=float)
+    obs_wl = np.asarray(obs_wl, dtype=float)
+    R = np.asarray(R, dtype=float)
+
+    if R.ndim == 0:
+        R = np.full_like(obs_wl, float(R), dtype=float)
+    if R.shape != obs_wl.shape:
+        raise ValueError("R must be scalar or have the same shape as obs_wl")
+
+    order = np.argsort(model_wl)
+    model_wl = model_wl[order]
+    model_flux = model_flux[order]
+    model_dw = _cell_widths(model_wl)
+
+    rebinned_flux = np.empty_like(obs_wl, dtype=float)
+    sqrt2 = np.sqrt(2.0)
+
+    for i, wl_center in enumerate(obs_wl):
+        width = wl_center / R[i]
+        if not np.isfinite(width) or width <= 0:
+            raise ValueError("R values must be finite and positive")
+
+        sigma = width / 2.355
+        lo = wl_center - 0.5 * width
+        hi = wl_center + 0.5 * width
+        support = (model_wl >= lo - nsigma * sigma) & (model_wl <= hi + nsigma * sigma)
+
+        if not np.any(support):
+            rebinned_flux[i] = np.interp(wl_center, model_wl, model_flux)
+            continue
+
+        wl_local = model_wl[support]
+        response = 0.5 * (
+            erf((hi - wl_local) / (sqrt2 * sigma))
+            - erf((lo - wl_local) / (sqrt2 * sigma))
+        )
+        weights = response * model_dw[support]
+        norm = np.sum(weights)
+
+        if not np.isfinite(norm) or norm <= 0:
+            rebinned_flux[i] = np.interp(wl_center, model_wl, model_flux)
+        else:
+            rebinned_flux[i] = np.sum(model_flux[support] * weights) / norm
+
+    return rebinned_flux
 
 def conv_non_uniform_R(model_flux, model_wl, R, obs_wl):
     """
