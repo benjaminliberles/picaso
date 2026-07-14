@@ -181,7 +181,10 @@ def run_diseq_climate_workflow(bundle, nofczns, nstr, temp, pressure,
     """
     ### 5) PROFILE to converge initial profile
     # define the initial convergence criteria for profile 
-    convergence_criteria = convergence_criteriaT(it_max=10, itmx=15, conv=5.0, convt=4.0, x_max_mult=7.0)
+    # Damped iterations may need additional outer iterations to converge;
+    # preserve the original cap for the default undamped behavior.
+    profile_itmx = 15 if damping else 7
+    convergence_criteria = convergence_criteriaT(it_max=10, itmx=profile_itmx, conv=5.0, convt=4.0, x_max_mult=7.0)
 
     final=False
     profile_flag, pressure, temperature, dtdp,CloudParameters,cld_out,flux_net_ir_layer,flux_net_v_layer,flux_plus_ir_attop,all_profiles,all_opd,all_kzz =profile(
@@ -2632,7 +2635,9 @@ def find_strat(bundle, nofczns,nstr,
     #convt_strat = 3.0 # convt 
     x_max_mult = 7.0
     
-    convergence_criteria = convergence_criteriaT(it_max=8, itmx=15, conv=5.0, convt=3.0, x_max_mult=x_max_mult)
+    # Damping is opt-in, so retain the original iteration cap otherwise.
+    strat_itmx = 15 if damping else 5
+    convergence_criteria = convergence_criteriaT(it_max=8, itmx=strat_itmx, conv=5.0, convt=3.0, x_max_mult=x_max_mult)
 
     ip2 = -10 #?
     subad = 0.98 # degree to which layer can be subadiabatic and
@@ -2799,7 +2804,7 @@ def find_strat(bundle, nofczns,nstr,
 
             flag_final_convergence = 1
         
-    itmx_strat =15
+    itmx_strat = 15 if damping else 6
     it_max_strat = 10
     conv_strat = 2.0 
     convt_strat = 2.0
