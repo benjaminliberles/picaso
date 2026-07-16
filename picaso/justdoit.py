@@ -1528,7 +1528,10 @@ def _bin_stellar_flux(wno_star, flux_star, wno_planet, delta_wno):
         in_bin = (wno_star >= wno_lo) & (wno_star <= wno_hi)
         wno_sub = np.concatenate([[wno_lo], wno_star[in_bin], [wno_hi]])
         flux_sub = 10**interpolator(np.log10(wno_sub))
-        bin_flux[i] = np.trapezoid(flux_sub, x=-1/wno_sub)
+        try:
+            bin_flux[i] = np.trapezoid(flux_sub, x=-1/wno_sub)
+        except AttributeError:
+            bin_flux[i] = np.trapz(flux_sub, x=-1/wno_sub)
     return bin_flux
 
 
