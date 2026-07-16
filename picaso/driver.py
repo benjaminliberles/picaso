@@ -162,6 +162,50 @@ def convert_flux_units(xgrid, flux, to_f_unit, flux_err=None, xgrid_unit='cm^(-1
         
     return flux_converted
 
+def _err_inf_to_model_variance(err_inf, xgrid, obs_key, config):
+    """
+    Convert error-inflation variance from the input data flux units to PICASO units.
+
+    The retrieval prior is specified in the same variance units as the input data
+    file, while parse_data converts the data/error arrays to erg/(s cm2 cm).
+    """
+    observations_config = config.get('ObservationData', {})
+    input_unit = observations_config.get('data_unit')
+    if input_unit is None:
+        return err_inf
+
+    target_unit = u.Unit('erg/(s*cm**2*cm)')
+    try:
+        source_unit = u.Unit(input_unit)
+    except Exception:
+        return err_inf
+
+    if source_unit == target_unit:
+        return err_inf
+
+    cache = config.setdefault('_err_inf_variance_scale_cache', {})
+    if obs_key not in cache:
+        try:
+            scale = convert_flux_units(
+                xgrid,
+                np.ones_like(xgrid, dtype=float),
+                to_f_unit=target_unit,
+                f_unit=input_unit,
+            ).value
+            cache[obs_key] = np.asarray(scale, dtype=float) ** 2
+        except Exception as exc:
+            warnings.warn(
+                f"Could not convert err_inf for {obs_key} from {input_unit} "
+                f"to {target_unit}; using raw err_inf value. Error: {exc}",
+                UserWarning,
+            )
+            cache[obs_key] = None
+
+    variance_scale = cache[obs_key]
+    if variance_scale is None:
+        return err_inf
+    return err_inf * variance_scale
+
 def convert_to_wavenumber(value, input_unit):
     """
     Converts a given grid from a specified Astropy unit (or string representation)
@@ -734,7 +778,7 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
             # add error inflation if exists
             if key in err_inf_dict:
                 icube = list(fitpars.keys()).index(f'err_inf.{key}')
-                err_inf = cube[j, icube];added_extras+=1
+                err_inf = _err_inf_to_model_variance(cube[j, icube], xdata, key, config);added_extras+=1
             else:
                 err_inf = 0
 
@@ -958,13 +1002,27 @@ def _cell_widths(grid):
     edges[-1] = grid[-1] + 0.5 * (grid[-1] - grid[-2])
     return np.diff(edges)
 
+def _bin_edges_from_centers(centers):
+    centers = np.asarray(centers, dtype=float)
+    if centers.ndim != 1:
+        raise ValueError("Bin centers must be a 1D array")
+    if len(centers) < 2:
+        raise ValueError("At least two observed wavelengths are required to define bin edges")
+
+    edges = np.empty(len(centers) + 1, dtype=float)
+    edges[1:-1] = 0.5 * (centers[:-1] + centers[1:])
+    edges[0] = centers[0] - 0.5 * (centers[1] - centers[0])
+    edges[-1] = centers[-1] + 0.5 * (centers[-1] - centers[-2])
+    return edges
+
 def convolve_top_hat_rebin_R(model_wl, model_flux, obs_wl, R, nsigma=5):
     """
     Convolve with a wavelength-dependent Gaussian LSF and bin-average onto data.
 
-    For each observed point, R defines both the Gaussian FWHM and the top-hat
-    bin width. The Gaussian-convolved model is analytically averaged over that
-    finite bin using the integrated Gaussian response.
+    For each observed point, R defines the Gaussian FWHM as dlambda=lambda/R.
+    The top-hat bin edges are inferred from the observed wavelength centers,
+    so the binning step follows the actual data sampling instead of applying a
+    second resolution-element-width smoothing.
     """
     model_wl = np.asarray(model_wl, dtype=float)
     model_flux = np.asarray(model_flux, dtype=float)
@@ -976,26 +1034,31 @@ def convolve_top_hat_rebin_R(model_wl, model_flux, obs_wl, R, nsigma=5):
     if R.shape != obs_wl.shape:
         raise ValueError("R must be scalar or have the same shape as obs_wl")
 
-    order = np.argsort(model_wl)
-    model_wl = model_wl[order]
-    model_flux = model_flux[order]
+    model_order = np.argsort(model_wl)
+    model_wl = model_wl[model_order]
+    model_flux = model_flux[model_order]
     model_dw = _cell_widths(model_wl)
 
-    rebinned_flux = np.empty_like(obs_wl, dtype=float)
+    obs_order = np.argsort(obs_wl)
+    obs_wl_sorted = obs_wl[obs_order]
+    R_sorted = R[obs_order]
+    obs_edges = _bin_edges_from_centers(obs_wl_sorted)
+
+    rebinned_sorted = np.empty_like(obs_wl_sorted, dtype=float)
     sqrt2 = np.sqrt(2.0)
 
-    for i, wl_center in enumerate(obs_wl):
-        width = wl_center / R[i]
-        if not np.isfinite(width) or width <= 0:
+    for i, wl_center in enumerate(obs_wl_sorted):
+        fwhm = wl_center / R_sorted[i]
+        if not np.isfinite(fwhm) or fwhm <= 0:
             raise ValueError("R values must be finite and positive")
 
-        sigma = width / 2.355
-        lo = wl_center - 0.5 * width
-        hi = wl_center + 0.5 * width
+        sigma = fwhm / 2.355
+        lo = obs_edges[i]
+        hi = obs_edges[i + 1]
         support = (model_wl >= lo - nsigma * sigma) & (model_wl <= hi + nsigma * sigma)
 
         if not np.any(support):
-            rebinned_flux[i] = np.interp(wl_center, model_wl, model_flux)
+            rebinned_sorted[i] = np.interp(wl_center, model_wl, model_flux)
             continue
 
         wl_local = model_wl[support]
@@ -1007,10 +1070,12 @@ def convolve_top_hat_rebin_R(model_wl, model_flux, obs_wl, R, nsigma=5):
         norm = np.sum(weights)
 
         if not np.isfinite(norm) or norm <= 0:
-            rebinned_flux[i] = np.interp(wl_center, model_wl, model_flux)
+            rebinned_sorted[i] = np.interp(wl_center, model_wl, model_flux)
         else:
-            rebinned_flux[i] = np.sum(model_flux[support] * weights) / norm
+            rebinned_sorted[i] = np.sum(model_flux[support] * weights) / norm
 
+    rebinned_flux = np.empty_like(obs_wl, dtype=float)
+    rebinned_flux[obs_order] = rebinned_sorted
     return rebinned_flux
 
 def conv_non_uniform_R(model_flux, model_wl, R, obs_wl):
