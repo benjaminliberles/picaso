@@ -1492,6 +1492,49 @@ def opannection(
         raise Exception("The only available opacity methods are: resortrebin, preweighted, and resampled")
     return opacityclass
 
+
+def _bin_stellar_flux(wno_star, flux_star, wno_planet, delta_wno):
+    """
+    Integrate a stellar spectrum over each k-table wavelength bin.
+
+    For each bin i, integrates the spectrum over the proper bin edges
+    [wno_planet[i] - delta_wno[i]/2, wno_planet[i] + delta_wno[i]/2],
+    including any original high-resolution spectrum points that fall
+    within the bin for accuracy with structured spectra (e.g. M-dwarfs).
+
+    Parameters
+    ----------
+    wno_star : array
+        Wavenumber grid of the stellar spectrum (cm^-1), filtered to positive values.
+    flux_star : array
+        Stellar flux at wno_star (erg/cm^2/s/cm^-1).
+    wno_planet : array
+        K-table bin center wavenumbers (cm^-1).
+    delta_wno : array
+        K-table bin widths (cm^-1).
+
+    Returns
+    -------
+    bin_flux : ndarray
+        Integrated flux per bin (erg/cm^2/s).
+    """
+    interpolator = interp1d(np.log10(wno_star), np.log10(flux_star), kind='linear',
+                            fill_value='extrapolate', bounds_error=False)
+    half_dw = delta_wno / 2.0
+    bin_flux = np.zeros(len(wno_planet))
+    for i in range(len(wno_planet)):
+        wno_lo = wno_planet[i] - half_dw[i]
+        wno_hi = wno_planet[i] + half_dw[i]
+        in_bin = (wno_star >= wno_lo) & (wno_star <= wno_hi)
+        wno_sub = np.concatenate([[wno_lo], wno_star[in_bin], [wno_hi]])
+        flux_sub = 10**interpolator(np.log10(wno_sub))
+        try:
+            bin_flux[i] = np.trapezoid(flux_sub, x=-1/wno_sub)
+        except AttributeError:
+            bin_flux[i] = np.trapz(flux_sub, x=-1/wno_sub)
+    return bin_flux
+
+
 class inputs():
     """Class to setup planet to run
 
@@ -1944,34 +1987,14 @@ class inputs():
             if not np.all(mask_valid):
                 wno_star, flux_star = wno_star[mask_valid], flux_star[mask_valid]
 
-            # Log-space interpolation
-            interpolator = interp1d(np.log10(wno_star), np.log10(flux_star), kind='linear',
-                                    fill_value='extrapolate', bounds_error=False)
-            fine_flux_star = 10**interpolator(np.log10(wno_planet))
-            
-            # Compute binned flux using trapezoidal integration
-            try:
-                fine_flux_star = np.array([np.trapezoid(fine_flux_star[(wno_planet >= wno_planet[i]) &
-                                                            (wno_planet <= wno_planet[i+1])],
-                                            x=-1/wno_planet[(wno_planet >= wno_planet[i]) &
-                                                            (wno_planet <= wno_planet[i+1])])
-                                    if i < len(wno_planet) - 1 else 0 for i in range(len(wno_planet))])
-            except:
-                fine_flux_star = np.array([np.trapz(fine_flux_star[(wno_planet >= wno_planet[i]) &
-                                                            (wno_planet <= wno_planet[i+1])],
-                                            x=-1/wno_planet[(wno_planet >= wno_planet[i]) &
-                                                            (wno_planet <= wno_planet[i+1])])
-                                    if i < len(wno_planet) - 1 else 0 for i in range(len(wno_planet))])
-                            
-            # Linear extrapolation for the last point
-            if len(wno_planet) > 2:
-                slope = (fine_flux_star[-2] - fine_flux_star[-3]) / (wno_planet[-2] - wno_planet[-3])
-                fine_flux_star[-1] = fine_flux_star[-2] + slope * (wno_planet[-1] - wno_planet[-2])
+            delta_wno = getattr(opannection, 'delta_wno',
+                                np.append(np.diff(wno_planet), np.diff(wno_planet)[-1]))
+            fine_flux_star = _bin_stellar_flux(wno_star, flux_star, wno_planet, delta_wno)
 
             # Handle NaNs and zeros
             mask = np.logical_or(np.isnan(fine_flux_star), fine_flux_star == 0)
             if np.sum(mask) > 20:
-                print(f"Having to replace {len(fine_wno_star[mask])} zeros or nans in stellar spectra")
+                print(f"Having to replace {np.sum(mask)} zeros or nans in stellar spectra")
                 non_zero_indices = np.where(~mask)[0]
                 fine_flux_star[mask] = np.interp(wno_planet[mask], wno_planet[non_zero_indices], fine_flux_star[non_zero_indices])
             
