@@ -1,12 +1,13 @@
 # ---
 # jupyter:
 #   jupytext:
+#     custom_cell_magics: kql
 #     formats: ipynb,py:percent
 #     text_representation:
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.11.2
 #   kernelspec:
 #     display_name: pic312
 #     language: python
@@ -150,7 +151,8 @@ print('Here are some default knot inputs',config['temperature']['knots'])
 #   * `distance` (dict): Distance to system, e.g. `{value=8.3, unit='parsec'}`.
 #   * `teff` (dict): Effective temperature, e.g. `{value=540, unit='Kelvin'}`.
 #   * `teq` (dict): Equilibrium temperature, e.g. `{value=500, unit='Kelvin'}`.
-#
+#   * `vrot` (dict): Rotational velocity, e.g. `{value=0, unit='km/s'}`.
+#   * `RV` (dict): Doppler velocity, e.g. `{value=0, unit='km/s'}`.
 # ---
 #
 # ### 6. Geometry Section

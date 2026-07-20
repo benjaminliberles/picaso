@@ -103,8 +103,12 @@ def write_results_to_config(grid, base):
     for item in grid:
         if ' (' in item:
             key, unit = item.split()
-            if key.lower() in base and grid[item][0]:
+            if key.lower() in base:
                 base[key.lower()]['value'] = grid[item][0]
+            elif key in base:
+                base[key]['value'] = grid[item][0]
+            else: 
+                raise Exception('Could not write value to config file')
         elif isinstance(base[item], list):
             try:
                 base[item] = [float(ele) for ele in grid[item][0]]
@@ -115,6 +119,8 @@ def write_results_to_config(grid, base):
                 base[item] = grid[item][0].item()
             else:
                 base[item] = grid[item][0]
+        else: 
+            raise Exception('Could not write value to config file')
 
 def update_config_recursively(base, user_defaults):
     """
@@ -655,7 +661,7 @@ def render_clouds():
         if 'clouds' in config:
             del config['clouds']
 
-def render_velocities():
+def render_velocities_deprecate():
     st.subheader("Doppler and Rotational Velocities (Optional)")
     include_doppler= st.selectbox("Do you want to add a doppler shift?", ('Yes', 'No'), index=None)
     if include_doppler == 'Yes':
@@ -1383,7 +1389,8 @@ else:
         render_clouds()
 
         #VELOCITIES (doppler and/or rotational)
-        render_velocities()
+        #added to object properties instead 
+        #render_velocities()
 
 
         # SPECTRUM

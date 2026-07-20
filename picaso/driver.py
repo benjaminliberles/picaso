@@ -524,6 +524,9 @@ def _velocity_config(config, key):
         return None
     if isinstance(value, Mapping):
         if 'value' in value:
+            if value['value']  == 0:
+                #avoids code slow downs if config is set but is set to zero 
+                return None
             unit = value.get('unit', 'km/s')
             kwargs = {k: v for k, v in value.items() if k not in ('value', 'unit')}
             kwargs['v_array'] = value['value'] * u.Unit(unit).to(u.km / u.s)
