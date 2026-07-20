@@ -24,6 +24,7 @@ import os
 import glob
 import pickle as pk
 import numpy as np
+_trapz = np.trapezoid if hasattr(np, 'trapezoid') else np.trapz
 import pandas as pd
 import copy
 import json
@@ -591,8 +592,8 @@ def picaso(bundle,opacityclass, dimension = '1d',calculation='reflected',
 
 
         #see equation 18 Batalha+2019 PICASO 
-        returns['bond_albedo'] = (np.trapezoid(x=1/wno, y=albedo*inputs['star']['flux'])/
-                                    np.trapezoid(x=1/wno, y=stellar_flux))
+        returns['bond_albedo'] = (_trapz(x=1/wno, y=albedo*inputs['star']['flux'])/
+                                    _trapz(x=1/wno, y=stellar_flux))
 
         if ((not np.isnan(sa ) and (not np.isnan(atm.planet.radius))) ):
             returns['fpfs_reflected'] = albedo*(atm.planet.radius/sa)**2.0
@@ -609,7 +610,7 @@ def picaso(bundle,opacityclass, dimension = '1d',calculation='reflected',
         thermal = compress_thermal(nwno,flux_at_top, gweight, tweight)
         returns['thermal'] = thermal
         returns['thermal_unit'] = 'erg/s/(cm^2)/(cm)'#'erg/s/(cm^2)/(cm^(-1))'
-        returns['effective_temperature'] = (np.trapezoid(x=1/wno[::-1], y=thermal[::-1])/5.67e-5)**0.25
+        returns['effective_temperature'] = (_trapz(x=1/wno[::-1], y=thermal[::-1])/5.67e-5)**0.25
 
         if full_output: 
             atm.thermal_flux_planet = thermal
@@ -1921,7 +1922,7 @@ class inputs():
             fine_flux_star = 10**interpolator(np.log10(wno_planet))
             
             # Compute binned flux using trapezoidal integration
-            fine_flux_star = np.array([np.trapezoid(fine_flux_star[(wno_planet >= wno_planet[i]) &
+            fine_flux_star = np.array([_trapz(fine_flux_star[(wno_planet >= wno_planet[i]) &
                                                         (wno_planet <= wno_planet[i+1])],
                                         x=-1/wno_planet[(wno_planet >= wno_planet[i]) &
                                                         (wno_planet <= wno_planet[i+1])])

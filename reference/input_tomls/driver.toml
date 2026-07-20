@@ -27,8 +27,8 @@ radius    = {value=1.2, unit='Rjup'}
 mass      = {value=1.2, unit='Mjup'}
 gravity   = {value=1e5, unit='cm/s**2'}
 distance  = {value=8.3,  unit='parsec'}
-teff      = {value=540.0, unit='Kelvin'}
-teq       = {value=500.0, unit='Kelvin'}
+RV       =  {value=0.0, unit='km/s'}
+vrot     =  {value=0.0, unit='km/s'}
 
 [geometry]
 phase = {value=0, unit='radian'} #planet phase angle
@@ -230,18 +230,18 @@ patch1 = 'clear'
 patch2 = 'cloud1'
 frac_1 = 0.3 #this is the fraction assigned to patch 1
 
-[doppler_shift]
-doppler_v = 0.0 # Doppler velocities in km/s for each spectrum.
+#[doppler_shift]
+#doppler_v = 0.0 # Doppler velocities in km/s for each spectrum.
 #edgeHandling = 'firstlast' #can we force these to be defaults and not include them in the toml? How often will we actually change this
 #edgeHandling_options = ['firstlast' , 'fillValue']
 #fillValue = 'None'
 
-[rotational_broadening]
-rotational_v = 0.0 # Projected rotational velocities (km/s)
-eps = 0.6 #linb darkening coefficient 
-nr = 10 #number of radial bins 
-ntheta = 100 # azimuthal bins in outer annulus 
-dif = 0 # differential rotation coefficient 
+#[rotational_broadening]
+#rotational_v = 0.0 # Projected rotational velocities (km/s)
+#eps = 0.6 #linb darkening coefficient 
+#nr = 10 #number of radial bins 
+#ntheta = 100 # azimuthal bins in outer annulus 
+#dif = 0 # differential rotation coefficient 
 
 [retrieval]
 
@@ -250,6 +250,16 @@ prior="uniform"
 uniform_kwargs={min=0.5, max=2}
 gaussian_kwargs={mean=1, std=0.5}
 log=false
+
+#[retrieval.object.RV]
+#prior="uniform"
+#uniform_kwargs={min=-100, max=100}
+#log=false
+
+#[retrieval.object.vrot]
+#prior="uniform"
+#uniform_kwargs={min=0, max=100}
+#log=false
 
 [retrieval.chemistry.free.H2O.vmr_switch]
 prior='uniform'
