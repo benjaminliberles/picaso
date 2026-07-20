@@ -946,6 +946,11 @@ def run_dynesty(config, loglike_fn, hypercube_fn, ndims, pool, prior_config):
 
 @register_sampler('ultranest')
 def run_ultranest(config, loglike_fn, hypercube_fn, ndims, pool, prior_config):
+    """
+    TODO: ultranest only runs through MPI and so this function does not use pool 
+    instead ultranest should be run via mpiexec -np num_procs python script.py 
+    which supports either local and cluster machines and will force mpi=True
+    """
     import ultranest
     fitpars = prior_finder(prior_config)
     param_names = list(fitpars.keys())
@@ -1487,3 +1492,34 @@ def plot_mr(picaso_output):
     full_output = picaso_output['full_output']
     fig = jpi.mixing_ratio(full_output, plot_type='bokeh', limit= 10) #limit controls the amount of outputs for the plot
     return fig
+
+
+#two functions to directly pull the master config and prune it of options that are not needed for the driver notebook. This is to avoid confusion with the large number of options in the master config that are not relevant to the driver notebook.
+def prune_dict_by_key(obj, sequence):
+    # 1. Identify keys at the current level that contain the sequence
+    keys_to_delete = [k for k in obj.keys() if sequence in str(k)]
+    
+    # 2. Delete those keys
+    for k in keys_to_delete:
+        del obj[k]
+    
+    # 3. Recurse into remaining dictionary values
+    for v in obj.values():
+        if isinstance(v, dict):
+            prune_dict_by_key(v, sequence)
+            
+    return obj
+
+def load_template_config():
+    master_driver = os.path.join(os.getenv('picaso_refdata'), 'input_tomls', 'driver.toml')
+    with open(master_driver, "rb") as f:
+        config = tomllib.load(f)
+    config = prune_dict_by_key(config,'_options')
+    config['OpticalProperties']['opacity_file']=config['OpticalProperties']['opacity_file'].replace('_default_',os.getenv('picaso_refdata'))
+    config['OpticalProperties']['virga_mieff']=config['OpticalProperties']['virga_mieff'].replace('_default_',os.getenv('picaso_refdata'))
+    config['temperature']['userfile']['filename'] =config['temperature']['userfile']['filename'].replace('_default_',os.getenv('picaso_refdata'))
+    config['temperature']['sonora_bobcat']['sonora_path'] =config['temperature']['sonora_bobcat']['sonora_path'].replace('_default_',os.getenv('picaso_refdata'))
+    config['chemistry']['userfile']['filename'] =config['chemistry']['userfile']['filename'].replace('_default_',os.getenv('picaso_refdata'))
+    config['clouds']['cloud1']['userfile']['filename'] =config['clouds']['cloud1']['userfile']['filename'].replace('_default_',os.getenv('picaso_refdata'))
+
+    return config

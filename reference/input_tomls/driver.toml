@@ -27,8 +27,8 @@ radius    = {value=1.2, unit='Rjup'}
 mass      = {value=1.2, unit='Mjup'}
 gravity   = {value=1e5, unit='cm/s**2'}
 distance  = {value=8.3,  unit='parsec'}
-teff      = {value=540, unit='Kelvin'}
-teq       = {value=500, unit='Kelvin'}
+teff      = {value=540.0, unit='Kelvin'}
+teq       = {value=500.0, unit='Kelvin'}
 
 [geometry]
 phase = {value=0, unit='radian'} #planet phase angle
@@ -36,14 +36,14 @@ phase_kwargs = {} #anything else for function phase in picaso
 
 [star]
 radius= {value=1, unit='Rsun'} 
-semi_major= {value=200, unit='AU'}
+semi_major= {value=200.0, unit='AU'}
 type='grid' #'grid' or 'userfile'
 type_options=['grid', 'userfile']
 
 [star.grid]
-logg  = 4
-teff  = 5400
-feh   = 0
+logg  = 4.0
+teff  = 5400.0
+feh   = 0.0
 database  ='ck04models'# options: phoenix, ck04models, or other pysynphot databases
 database_options=['ck04models', 'phoenix']
 
@@ -72,12 +72,12 @@ T = 500
 
 [temperature.zj24]
 pressures=[1e3, 1e1, 1e0, 1e-1, 1e-2, 1e-4] # bar 
-Tbottom=2000 # K 
+Tbottom=2000.0 # K 
 dTs = [0.2857, 0.25, 0.0, 0.25, 0.2, 0.12]
 
 [temperature.knots]
 P_knots=[1e2,1e1,1e0,1e-1,1e-2, 1e-3]
-T_knots=[1000, 550, 300, 200, 100, 50]
+T_knots=[1000.0, 550.0, 300.0, 200.0, 100.0, 50.0]
 interpolation='brewster' 
 interpolation_options = ['brewster', 'linear', 'quadratic_spline', 'cubic_spline']
 scipy_interpolate_kwargs={}
@@ -87,7 +87,7 @@ scipy_interpolate_kwargs={}
 P_1=1e1
 P_2=1e-3
 P_3=1e-5
-T_3=1000
+T_3=1000.0
 alpha_1=1
 alpha_2=1
 beta=0.5
@@ -95,21 +95,21 @@ beta=0.5
 [temperature.madhu_seager_09_noinversion]
 P_1=1e1
 P_3=1e-5
-T_3=1000
+T_3=1000.0
 alpha_1=1
 alpha_2=1
 beta=0.5
 
 [temperature.guillot]
-Teq=1000
-T_int=100
+Teq=1000.0
+T_int=100.0
 logg1=-1
 logKir=-1.5
 alpha=0.5
 
 [temperature.sonora_bobcat]
 sonora_path='_default_/sonora_grids/bobcat'
-teff=1000
+teff=1000.0
 
 #TODO turn below into a notice
 #options: 'visscher', 'free', 'userfile','chemeq_on_the_fly'; delete this block if already given chem in pt userfile : future updates 'fast_chem' vs 'photo_chem'
@@ -127,7 +127,7 @@ profile="2gradients" #constant, gradient, knots# # this emulates water rainout
 p_switch = 1e-2
 vmr_switch=1e-3
 gradient_top=-4
-gradient_bottom=0
+gradient_bottom=0.0
 
 [chemistry.free.CH4]
 profile="knots"
@@ -139,7 +139,7 @@ vmr_knots=[1e-3, 1e-5, 1e-6, 1e-4, 1e-5] #vmr units
 profile="2gradients"
 p_switch = 1e2 
 vmr_switch=1e-5
-gradient_top=0
+gradient_top=0.0
 gradient_bottom=-1.5
 
 [chemistry.free.NH3]
@@ -161,55 +161,55 @@ profile="background"
 
 [chemistry.visscher]
 cto_absolute=0.55
-log_mh=0
+log_mh=0.0
 
 [chemistry.chemeq_on_the_fly]
 cto_absolute=0.55
-log_mh=0
+log_mh=0.0
 
 [chemistry.userfile]
 filename='_default_/base_cases/HJ.pt'
 pd_kwargs={sep=' '}
 
 [clouds]
-cloud1_type='virga' #options: brewster_grey, brewster_mie, virga, flex_fsed, hard_grey, userfile
+cloud1_type='hard_grey' #options: brewster_grey, brewster_mie, virga, flex_fsed, hard_grey, userfile
 
 [clouds.cloud1.hard_grey]
-p = [1] # {value=1,unit='logbar'} #bottom pressure
-dp = [1] # {value=1,unit='logbar'} #thickness in log 
+p = [1.0] # {value=1,unit='logbar'} #bottom pressure
+dp = [1.0] # {value=1,unit='logbar'} #thickness in log 
 w0 = [0.0] #single scattering albedo
 g0 = [0.0] #asymmetry
-opd = [10] #cloud optical depth per layer
+opd = [10.0] #cloud optical depth per layer
 
 [clouds.cloud1.flex_fsed]
 condensate='Al2O3'#'SiO2'
-base_pressure=1 # {value=1 , unit='bar'}
-ndz=2 #arbitrary scaling for setting max optical depth of the cloud
-fsed=1
+base_pressure=1.0 # {value=1 , unit='bar'}
+ndz=2.0 #arbitrary scaling for setting max optical depth of the cloud
+fsed=1.0
 distribution='lognorm' # "lognorm" or "hansen" .. make sure to add respective kwargs below
 distribution_options = ['lognorm', 'hansen']
-lognorm_kwargs = {sigma=1, lograd = -4}  #log rad in log cm
-hansen_kwargs = {b=1 , lograd = -4}
+lognorm_kwargs = {sigma=1.0, lograd = -4.0}  #log rad in log cm
+hansen_kwargs = {b=1.0 , lograd = -4.0}
 
 [clouds.cloud1.virga]
-mh = 1 
+mh = 1.0 
 condensates=['Al2O3']#['SiO2','Al2O3']
-fsed=1
+fsed=1.0
 kzz=1e9 # {value=1e9,unit='cm**2/s'}
 mmw = 2.2
-sig =2 
+sig =2.0 
 # can add any other virga param see justdoit.inputs.virga
 
 [clouds.cloud1.brewster_mie]
 condensate='Na2S'
 decay_type = 'slab' # can be 'slab' or 'deck' #make sure to add respective kwargs below
 decay_type_options = ['slab', 'deck']
-slab_kwargs={ptop= 1, dp= 1, reference_tau= 1} # ptop: log bar, dp: log bar, ref tau: micron
-deck_kwargs={ptop= -1, dp= 1} # ptop: log bar, dp: log bar
+slab_kwargs={ptop= 1.0, dp= 1.0, reference_tau= 1.0} # ptop: log bar, dp: log bar, ref tau: micron
+deck_kwargs={ptop= -1.0, dp= 1.0} # ptop: log bar, dp: log bar
 distribution = 'lognorm' # 'lognorm' or 'hansen', make sure to add respective kwargs below
 distribution_options = ['lognorm', 'hansen']
-lognorm_kwargs = {sigma=1, lograd = -4}  #log rad in log cm
-hansen_kwargs = {b=1 , lograd = -4}
+lognorm_kwargs = {sigma=1.0, lograd = -4.0}  #log rad in log cm
+hansen_kwargs = {b=1.0 , lograd = -4.0}
 
 [clouds.cloud1.brewster_grey]
 decay_type = 'slab' # can be 'slab' or 'deck' #make sure to add respective kwargs below
@@ -217,8 +217,8 @@ decay_type_options = ['slab', 'deck']
 alpha=-4 # used for wavelength dependent scattering cross section 
 ssa=1 # single scattering albedo set to 1 
 reference_wave=1 #reference wave in micron sets to alpha 
-slab_kwargs={ptop= -1, dp= 1, reference_tau= 1} # ptop: log bar, dp: log bar, ref tau: micron
-deck_kwargs={ptop= -1, dp= 1} # ptop: log bar, dp: log bar
+slab_kwargs={ptop= -1.0, dp= 1.0, reference_tau= 1.0} # ptop: log bar, dp: log bar, ref tau: micron
+deck_kwargs={ptop= -1.0, dp= 1.0} # ptop: log bar, dp: log bar
 
 [clouds.cloud1.userfile]
 filename='_default_/base_cases/HJ.cld'
@@ -231,13 +231,13 @@ patch2 = 'cloud1'
 frac_1 = 0.3 #this is the fraction assigned to patch 1
 
 [doppler_shift]
-doppler_v = 0 # Doppler velocities in km/s for each spectrum.
+doppler_v = 0.0 # Doppler velocities in km/s for each spectrum.
 #edgeHandling = 'firstlast' #can we force these to be defaults and not include them in the toml? How often will we actually change this
 #edgeHandling_options = ['firstlast' , 'fillValue']
 #fillValue = 'None'
 
 [rotational_broadening]
-rotational_v = 0 # Projected rotational velocities (km/s)
+rotational_v = 0.0 # Projected rotational velocities (km/s)
 eps = 0.6 #linb darkening coefficient 
 nr = 10 #number of radial bins 
 ntheta = 100 # azimuthal bins in outer annulus 
@@ -253,12 +253,12 @@ log=false
 
 [retrieval.chemistry.free.H2O.vmr_switch]
 prior='uniform'
-uniform_kwargs={min=-12, max=0}
+uniform_kwargs={min=-12.0, max=0.0}
 log=false
 
 [retrieval.clouds.cloud1.slab-grey.ptop]
 prior="uniform"
-uniform_kwargs={min=-3, max=2}
+uniform_kwargs={min=-3.0, max=2.0}
 log=true
 
 [retrieval.clouds.cloud1.slab-grey.dp]
