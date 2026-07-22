@@ -1443,7 +1443,8 @@ def setup_spectrum_class(config, opacity, param_tools, stage=None):
                                   df_cleaned, left_index=True, right_index=True, how='inner')
     elif chem_type!='': 
         chemistry_function = getattr(param_tools, f'chem_{chem_type}')
-        df_mixingratio  = chemistry_function(**chem_config[chem_type])#note, this includes P and T already
+        df_mixingratio  = chemistry_function(**chem_config[chem_type].get('grid_kwargs',chem_config[chem_type]))#note, this includes P and T already
+    
     #set final with chem
     A.atmosphere(df = df_mixingratio)
     if stage == 'chemistry':

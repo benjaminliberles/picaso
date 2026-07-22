@@ -181,6 +181,7 @@ pd_kwargs={sep=' '}
 model_dir='_custom_/wasp-17b/'
 
 [chemistry.xarray_grid.grid_kwargs]
+molecules='all'
 mh=0
 cto=1
 tint=200

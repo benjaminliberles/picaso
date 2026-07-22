@@ -179,8 +179,8 @@ class GridFitter():
         non_overlapping_rows = merged_df[merged_df['_merge'] == 'left_only']
         
         if non_overlapping_rows.shape[0]>1: 
-            self.verbose: print('Grid is not square. These values are missing')
-            self.verbose: print(grid_pairs)
+            if self.verbose: print('Grid is not square. These values are missing')
+            if self.verbose: print(non_overlapping_rows)
             raise Exception('force_square=True therefore we are crashing GridFitter until the folder of models has a square grid. Please remove files that are making the grid not square.') 
 
     def load_grid_params(self,grid_name,to_fit='transit_depth',
@@ -226,6 +226,7 @@ class GridFitter():
                 mols = [i for i in ds.data_vars.keys() if 
                         'pressure' in ds.data_vars[i].coords 
                        and i != 'temperature']
+                self.species = mols
 
             if ct == 0:
                 nwave = len(ds['wavelength'].values)

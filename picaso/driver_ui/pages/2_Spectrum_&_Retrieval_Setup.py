@@ -419,14 +419,24 @@ def render_pressure_and_temperature(param_tools=None):
                 param_tools = reinitialize_paramtools(param_tools,model_dir)
                 grid_name = param_tools.grid_name
                 grid_parameters_unique = param_tools.interp_params[grid_name]['grid_parameters_unique']
-                grid_kwargs={}
+                grid_kwargs=config['temperature'][temp_profile].get('grid_kwargs',{})
                 with st.container(border=True):
                     for param_name in grid_parameters_unique:
                         values = grid_parameters_unique[param_name]
                         minn = np.min(values)
                         maxx = np.max(values)
-                        grid_kwargs[param_name] = st.slider(param_name, min_value=minn, max_value=maxx)
-                config['temperature'][temp_profile]['grid_kwargs'] =    grid_kwargs         
+                        if 'xarray_grid_params' in st.session_state:
+                            value = float(st.session_state['xarray_grid_params'].get(param_name,None))
+                        else: 
+                            value = float(grid_kwargs.get(param_name,None))
+                            if value: 
+                                if not ((value<=maxx) & (value>=minn)): 
+                                    value=None
+                        grid_kwargs[param_name] = st.slider(param_name, 
+                                                            value = value,
+                                                            min_value=minn, max_value=maxx)
+                        st.session_state['xarray_grid_params'] = grid_kwargs
+                config['temperature'][temp_profile]['grid_kwargs'] =    st.session_state['xarray_grid_params']         
 
     # GRAPH PRESSURE-TEMPERATURE
     if st.button('See Pressure-Temperature plot'):
@@ -436,6 +446,16 @@ def render_pressure_and_temperature(param_tools=None):
 # ============================================
 # INPUT CHEMISTRY INFORMATION
 # ============================================
+def get_possible_molecules(): 
+    possible_cont=[]
+    continuum_sources = ['H2','He','H','H2-','H-']
+    for icont in list(opacity.avail_continuum): #e.g., H2H2, H2He H-ff etc 
+        for ispe in continuum_sources:
+            if ispe in icont: possible_cont+=[ispe]
+    all_mols = list(set(list(opacity.molecules) + possible_cont))
+    # Get current molecules from config by checking against all_mols
+    return all_mols
+
 def render_free_chem_options():
     """
     Renders the UI for free chemistry options. 
@@ -446,16 +466,9 @@ def render_free_chem_options():
     st.subheader("Free Chemistry Configuration")
     
     # 1) Select molecules
-    possible_cont=[]
-    continuum_sources = ['H2','He','H','H2-','H-']
-    for icont in list(opacity.avail_continuum): #e.g., H2H2, H2He H-ff etc 
-        for ispe in continuum_sources:
-            if ispe in icont: possible_cont+=[ispe]
-    all_mols = list(set(list(opacity.molecules) + possible_cont))
-    # Get current molecules from config by checking against all_mols
+    all_mols = get_possible_molecules()
     current_mols = [k for k in config['chemistry']['free'].keys() if k in all_mols]
-    
-    
+
     selected_mols = st.multiselect("Select molecules for chemistry", all_mols, default=current_mols)
     
     
@@ -555,6 +568,20 @@ def render_free_chem_options():
 
     config['chemistry']['free']['species']=selected_mols
 
+def render_xarray_chem(): 
+    grid_params = st.session_state.get('xarray_grid_params',None)
+    if not grid_params: 
+        st.error('If using xarray grid for chemistry must select the parameters through temperature pressure profile for consistency')
+        st.stop()
+    molecules_grid = param_tools.species
+    molecules_opa = get_possible_molecules()
+    default = [i for i in molecules_opa if i in molecules_grid]
+    selected_mols = st.multiselect("Select subset of molecules to include in spectra", molecules_grid, default=default)
+
+    config['chemistry']['xarray_grid'] = config['temperature']['xarray_grid']
+    config['chemistry']['xarray_grid']['grid_kwargs']['molecules'] = selected_mols
+    print('chemistry config',config['chemistry']['xarray_grid'])
+
 
 def render_chemistry():
     # SET CHEMISTRY METHOD
@@ -567,6 +594,8 @@ def render_chemistry():
         # RENDER FREE CHEMISTRY 
         if 'free' in chem_method:
             render_free_chem_options()
+        elif 'xarray' in chem_method: 
+            render_xarray_chem()
         else:
             # EDITABLE SECTION FOR OTHER CHEMISTRY METHODS
             editable_section(config['chemistry'][f'{config['chemistry']['method']}'], 'chemistry')

@@ -507,6 +507,11 @@ class Parameterize(GridFitter):
         pressure_grid = self.pressure_level
         temp_grid = self.temperature_level
         mixingratio_df = pd.DataFrame(dict(pressure=pressure_grid, temperature=temp_grid))
+        if 'all' in molecules: 
+            molecules=self.interp_params[grid_name]['square_chem_grid'].keys()
+        elif isinstance(molecules,str):
+            molecules=[molecules] 
+
         for imol in molecules:
             chem_vals = custom_interp(final_goal, self, grid_name, to_interp='custom',
                                       array_to_interp=self.interp_params[grid_name]['square_chem_grid'][imol])
