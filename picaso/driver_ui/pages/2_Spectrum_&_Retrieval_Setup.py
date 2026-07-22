@@ -302,7 +302,6 @@ def reinitialize_paramtools(param_tools, model_dir):
     param_tools = Parameterize(load_cld_optical=load_cld_optical,
                                mieff_dir=mieff_dir,
                                model_dir=model_dir)
-    print('reinitialize_paramtools',param_tools.grid_name)
     return param_tools
 
 def render_admin():
@@ -580,7 +579,6 @@ def render_xarray_chem():
 
     config['chemistry']['xarray_grid'] = config['temperature']['xarray_grid']
     config['chemistry']['xarray_grid']['grid_kwargs']['molecules'] = selected_mols
-    print('chemistry config',config['chemistry']['xarray_grid'])
 
 
 def render_chemistry():
