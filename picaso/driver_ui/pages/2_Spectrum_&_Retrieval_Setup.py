@@ -297,11 +297,17 @@ def reinitialize_paramtools(param_tools, model_dir):
 
     This is slightly repetetive as the optical cloud properties gets loaded twice. 
     """
+    cached_grid = st.session_state.get('param_tools_grid')
+    if cached_grid is not None:
+        if getattr(cached_grid, 'model_dir', None) == model_dir and getattr(cached_grid, 'mieff_dir', None) == param_tools.mieff_dir:
+            return cached_grid
+
     load_cld_optical = param_tools.load_cld_optical
     mieff_dir=param_tools.mieff_dir
     param_tools = Parameterize(load_cld_optical=load_cld_optical,
                                mieff_dir=mieff_dir,
                                model_dir=model_dir)
+    st.session_state['param_tools_grid'] = param_tools
     return param_tools
 
 def render_admin():
@@ -322,11 +328,17 @@ def render_admin():
     )
 
     # for later, once the jdi.vj.available() is updated, below pops can be removed
-    a =jdi.vj.available()
-    a.pop(a.index('CaAl12O19'))
-    a.pop(a.index('CaTiO3'))
-    a.pop(a.index('SiO2'))
-    param_tools = Parameterize(load_cld_optical=a, mieff_dir=config['OpticalProperties'].get('virga_mieff', None))
+    mieff_dir = config['OpticalProperties'].get('virga_mieff', None)
+    cached_param_tools = st.session_state.get('param_tools')
+    if cached_param_tools is not None and getattr(cached_param_tools, 'mieff_dir', None) == mieff_dir:
+        param_tools = cached_param_tools
+    else:
+        a = jdi.vj.available()
+        a.pop(a.index('CaAl12O19'))
+        a.pop(a.index('CaTiO3'))
+        a.pop(a.index('SiO2'))
+        param_tools = Parameterize(load_cld_optical=a, mieff_dir=mieff_dir)
+        st.session_state['param_tools'] = param_tools
 
     # CALCULATION TYPE AND OBSERVATION TYPE SETTING
     st.subheader('Select calculation to perform')

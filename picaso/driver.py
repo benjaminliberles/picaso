@@ -19,6 +19,7 @@ from schwimmbad import MPIPool,choose_pool
 dynesty.utils.pickle_module = dill
 from astropy.io import fits
 import spectres
+import contextlib
 
 #all these come from justdoit
 #import os
@@ -1265,7 +1266,7 @@ def retrieve(config, param_tools):
                   OPA=OPA, param_tools=param_tools, DATA_DICT=DATA_DICT,CONV_DICT=CONV_DICT)
     
 
-    import contextlib
+    
 
     @contextlib.contextmanager
     def maybe_pool(mpi, processes):
