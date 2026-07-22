@@ -70,6 +70,7 @@ class GridFitter():
     def __init__(self, grid_name, model_dir=None,
         to_fit='transit_depth', model_type='xarrays', save_chem=False, 
         verbose=True, force_square=True):
+        self.to_fit = to_fit
         self.verbose=verbose
         self.force_square=force_square
         
@@ -102,6 +103,7 @@ class GridFitter():
         if not os.path.isdir(model_dir): 
             raise Exception(f'Path to models entered does not exist: {model_dir}')
         else: 
+            self.model_dir = model_dir
             self.list_of_files[grid_name] = glob.glob(os.path.join(model_dir,"*.nc"))
             nfiles = len(self.list_of_files[grid_name])
             if nfiles<=1:
@@ -193,13 +195,19 @@ class GridFitter():
         to_fit : str 
             Default is transit_depth but also could be flux or any other xarray parameter 
             you are interested in fitting. 
+            If None, does not read or save the spectra in the grid 
+            and only reads pt/chem
+        save_chem : bool 
+            if True, saves the chemistry 
+
 
         Returns
         -------
         None 
             Creates self.overview, and self.grid_params
         """
-        
+        if ((save_chem == False) & isinstance(to_fit, type(None))):
+            raise Exception('save_chem==False and to_fit str has not been specified so adding grid is not loading anything.')
 
         #define possible grid parameters
         self.grid_params[grid_name] = {i:{j:np.array([]) for j in possible_params[i]} for i in possible_params.keys()}
@@ -226,7 +234,7 @@ class GridFitter():
                 spectra_grid = np.zeros(shape=(number_files,nwave))
                 temperature_grid = np.zeros(shape=(number_files,npress))
                 pressure_grid = np.zeros(shape=(number_files,npress))
-                wavelength = ds['wavelength'].values
+                if to_fit: wavelength = ds['wavelength'].values
                 if save_chem:
                     molecule_dict = {}
                     for imol in mols: 
@@ -237,7 +245,7 @@ class GridFitter():
             #seems like we need to save these?????
             temperature_grid[ct,:] = ds['temperature'].values[:]
             pressure_grid[ct,:] = ds['pressure'].values[:]
-            spectra_grid[ct,:] = ds[to_fit].values[:] 
+            if to_fit: spectra_grid[ct,:] = ds[to_fit].values[:] 
             if save_chem:
                 for imol in mols: 
                     molecule_dict[imol][ct,:] = ds[imol].values[:]
@@ -291,10 +299,10 @@ class GridFitter():
         self.overview[grid_name]['num_params'] = cnt_params
 
         #lastly save wavelength, temperature, spectra 
-        self.wavelength[grid_name] = wavelength
+        if to_fit: self.wavelength[grid_name] = wavelength
         self.pressure[grid_name] = pressure_grid
         self.temperature[grid_name] = temperature_grid
-        self.spectra[grid_name] = spectra_grid
+        if to_fit: self.spectra[grid_name] = spectra_grid
         if save_chem: 
             self.chemistry[grid_name] = molecule_dict
     def fit_all(self):
@@ -741,9 +749,10 @@ class GridFitter():
         grid_name : str 
             Name of grid that you want to interpolate on
         """
-        all_spectra = fitter.spectra[grid_name]
+        if fitter.to_fit: 
+            all_spectra = fitter.spectra[grid_name]
         
-        if add_ptchem: 
+        if fitter.save_chem: 
             all_pt = fitter.temperature[grid_name]
             all_chem = fitter.chemistry[grid_name]
             mols = all_chem.keys()
@@ -762,8 +771,11 @@ class GridFitter():
                 df_grid_params[j] = fitter.grid_params[grid_name][i][j]
         grid_params_unique = {}
 
-        offset_pm = abs(2*(np.min(fitter.spectra[grid_name]) - 
+        if fitter.to_fit: 
+            offset_pm = abs(2*(np.min(fitter.spectra[grid_name]) - 
                            np.max(fitter.spectra[grid_name])))
+        else: 
+            offset_pm = 0 
 
         for i in grid_params:
             grid_params_unique[i]=np.array([float(i) for i in 
@@ -790,7 +802,9 @@ class GridFitter():
             if len(matches.index)==0: 
                 #if there are no matches then let's add a nan to that location
                 full_df_grid.iloc[i,:] = icombo
-                spectra_square += [[np.nan]*all_spectra.shape[1]]
+                if fitter.to_fit:
+                    spectra_square += [[np.nan]*all_spectra.shape[1]] 
+
                 if add_ptchem: 
                     pt_square += [[np.nan]*all_pt.shape[1]]
                     for imol in mols:
@@ -800,14 +814,16 @@ class GridFitter():
                 #if there are matches then let's add in the corresponding value
                 ind = matches.index[0]
                 full_df_grid.iloc[i,:] = icombo
-                spectra_square += [all_spectra[ind]]
+                if fitter.to_fit:
+                    spectra_square += [all_spectra[ind]]
                 if add_ptchem: 
                     pt_square += [all_pt[ind]]
                     for imol in mols: 
                         chem_square[imol] += [all_chem[imol][ind]]
 
         #now we can properly reshape everything
-        spectra_square = np.reshape(spectra_square, 
+        if fitter.to_fit:
+            spectra_square = np.reshape(spectra_square, 
                                     [len(i) for i in grid_params_unique.values()]
                                     +[all_spectra.shape[1]])
 

@@ -163,7 +163,7 @@ def clean_dictionary(data, suffix="_options"):
 
     return data
 
-def run_spectrum_class(stage=None):
+def run_spectrum_class(local_param_tools,stage=None):
     """
     Runs driver.py's spectrum class as far as the level specified in stage with current configuration
 
@@ -177,7 +177,7 @@ def run_spectrum_class(stage=None):
     picaso.justdoit.inputs
         Configured class
     """
-    return go.setup_spectrum_class(clean_dictionary(config), opacity, param_tools, stage)
+    return go.setup_spectrum_class(clean_dictionary(config), opacity, local_param_tools, stage)
 
 def update_toml_with_a_value_for_a_free_parameter_deprecate(dictionary, keys, value):
     """
@@ -291,6 +291,20 @@ def setup_config():
                 return tomllib.load(f)
     return None
 
+def reinitialize_paramtools(param_tools, model_dir): 
+    """
+    This is used for uploading model grids if param tools needs to be reinitalized in the interface
+
+    This is slightly repetetive as the optical cloud properties gets loaded twice. 
+    """
+    load_cld_optical = param_tools.load_cld_optical
+    mieff_dir=param_tools.mieff_dir
+    param_tools = Parameterize(load_cld_optical=load_cld_optical,
+                               mieff_dir=mieff_dir,
+                               model_dir=model_dir)
+    print('reinitialize_paramtools',param_tools.grid_name)
+    return param_tools
+
 def render_admin():
     # DATAPATH ENTERING
     check_default_opa = config.get('OpticalProperties').get('opacity_file','')
@@ -373,7 +387,7 @@ def render_phase_angle():
 # ============================================
 # PRESSURE AND TEMPERATURE
 # ============================================
-def render_pressure_and_temperature():
+def render_pressure_and_temperature(param_tools=None):
     # EDIABLE PRESSURE SECTION
     st.text('Configure pressure (can ignore if using a userfile or sonora bobcat for temperature)')
     editable_section(config['temperature']['pressure'], 'pt')
@@ -397,12 +411,28 @@ def render_pressure_and_temperature():
             if attr.endswith('_options'):
                 pure_attr = attr.split('_')[0]
                 config['temperature'][temp_profile][pure_attr] = st.selectbox(f"{temp_profile.capitalize()} {pure_attr.capitalize()} Options", config['temperature'][temp_profile][attr], index=None)
+            elif attr.endswith('model_dir'):
+                model_dir = str(config['temperature'][temp_profile]['model_dir'])
+                if not os.path.isdir(model_dir): 
+                    st.error('Enter valid path to xarray model grid to proceed with this option')
+                    st.stop()
+                param_tools = reinitialize_paramtools(param_tools,model_dir)
+                grid_name = param_tools.grid_name
+                grid_parameters_unique = param_tools.interp_params[grid_name]['grid_parameters_unique']
+                grid_kwargs={}
+                with st.container(border=True):
+                    for param_name in grid_parameters_unique:
+                        values = grid_parameters_unique[param_name]
+                        minn = np.min(values)
+                        maxx = np.max(values)
+                        grid_kwargs[param_name] = st.slider(param_name, min_value=minn, max_value=maxx)
+                config['temperature'][temp_profile]['grid_kwargs'] =    grid_kwargs         
 
     # GRAPH PRESSURE-TEMPERATURE
     if st.button('See Pressure-Temperature plot'):
-        data_class = run_spectrum_class('temperature')
+        data_class = run_spectrum_class(param_tools, 'temperature')
         streamlit_bokeh(jpi.pt({'layer': data_class.inputs['atmosphere']['profile']}))
-
+    return param_tools
 # ============================================
 # INPUT CHEMISTRY INFORMATION
 # ============================================
@@ -544,7 +574,7 @@ def render_chemistry():
     # GRAPH MIXING RATIOS
     if st.button('See Mixing Ratios'):
         try:
-            data_class = run_spectrum_class('chemistry')
+            data_class = run_spectrum_class(param_tools,'chemistry')
             chem_df = data_class.inputs['atmosphere']['profile']
             # form {mixingratios: {'H20': [...], ...}} to pass to jpi.mixing_ratio
             # chem_df.keys() would have [temperature, pressure, H20, CO2, <other example molecules> ]
@@ -642,7 +672,7 @@ def render_clouds():
         ##########################
         if st.button('See Clouds'):
             try:
-                data_class = run_spectrum_class()
+                data_class = run_spectrum_class(param_tools)
                 if 'clouds' in data_class.inputs and 'profile' in data_class.inputs['clouds']:
                     df = data_class.inputs['clouds']['profile'].astype('float')
                     wavenumber = df['wavenumber'].unique()
@@ -1384,7 +1414,7 @@ else:
 
         # ATMOSPHERIC VARIABLES
         st.subheader("Atmospheric Variables")
-        render_pressure_and_temperature()
+        param_tools=render_pressure_and_temperature(param_tools=param_tools)
         render_chemistry()
         render_clouds()
 

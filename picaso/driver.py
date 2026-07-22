@@ -33,9 +33,9 @@ import spectres
 # import dynesty
 
 
-chem_options = ['visscher', 'free', 'chemeq_on_the_fly','userfile']
+chem_options = ['visscher', 'free', 'chemeq_on_the_fly','userfile', 'xarray_grid']
 cloud_options = ['brewster_grey', 'brewster_mie', 'virga', 'flex_fsed', 'hard_grey', 'userfile']
-pt_options = ['userfile','isothermal', 'knots', 'guillot', 'sonora_bobcat',  'madhu_seager_09_inversion','madhu_seager_09_noinversion', 'zj24'] #, 'molliere_20', 'Kitzman_20', 
+pt_options = ['userfile','isothermal', 'knots', 'guillot', 'sonora_bobcat',  'madhu_seager_09_inversion','madhu_seager_09_noinversion', 'zj24', 'xarray_grid'] #, 'molliere_20', 'Kitzman_20', 
 
 # Mappings for observation types to picaso calculation types
 OBSERVATION_CALC_MAP = {
@@ -62,8 +62,10 @@ def run(driver_file=None,driver_dict=None,return_class=False):
     preload_cloud_miefs = find_values_for_key(config ,'condensate')
     virga_mieff   = config['OpticalProperties'].get('virga_mieff',None)
     #if the above are both blank then this is just returning a set of functions
+    model_dir = config['temperature'].get('xarray_grid',{}).get('model_dir',None)
     param_tools = Parameterize(load_cld_optical=preload_cloud_miefs,
-                                    mieff_dir=virga_mieff)
+                               mieff_dir=virga_mieff,
+                               model_dir=model_dir)
     
     #setup opacity outside main run
     opacity = opannection(
@@ -499,7 +501,7 @@ def prior_finder(d):
     recurse((), d)
     return sections
 
-def hypercube(u, fitpars):
+def hypercube(u, fitpars,param_tools=None):
     x=np.empty(len(u))
     for i,key in enumerate(fitpars.keys()):
         if fitpars[key]['prior'] == 'uniform':
@@ -510,6 +512,18 @@ def hypercube(u, fitpars):
             mean=fitpars[key]['gaussian_kwargs']['mean']
             std=fitpars[key]['gaussian_kwargs']['std']
             x[i]=stats.norm.ppf(u[i], loc=mean, scale=std)
+        elif fitpars[key]['prior'] == 'xarray_grid':
+            if param_tools is None:
+                raise ValueError("param_tools must be provided to hypercube to use xarray_grid prior")
+            param_name = key.split('.')[-1]
+            grid_name = param_tools.grid_name
+            grid_parameters_unique = param_tools.interp_params[grid_name]['grid_parameters_unique']
+            if param_name not in grid_parameters_unique:
+                raise ValueError(f"Parameter '{param_name}' not found in grid '{grid_name}' unique parameters.")
+            values = grid_parameters_unique[param_name]
+            minn = np.min(values)
+            maxx = np.max(values)
+            x[i] = minn + (maxx - minn) * u[i]
         else:
             raise Exception('Prior type not available')
         if fitpars[key]['log'] == True or fitpars[key]['log'] == 'True':
@@ -1313,8 +1327,10 @@ def check_model_samples(config, N=100, samples=None):
         )
     preload_cloud_miefs = find_values_for_key(config ,'condensate')
     virga_mieff   = config['OpticalProperties'].get('virga_mieff',None)
+    model_dir = config['temperature'].get('xarray_grid',{}).get('model_dir',None)
     param_tools = Parameterize(load_cld_optical=preload_cloud_miefs,
-                                        mieff_dir=virga_mieff)
+                               mieff_dir=virga_mieff,
+                               model_dir=model_dir)
     
     fitpars=prior_finder(config['retrieval'])
     ndims=len(fitpars)
@@ -1323,7 +1339,7 @@ def check_model_samples(config, N=100, samples=None):
         thetas = samples
     else:
         cube = np.random.random([N, ndims])
-        thetas = [hypercube(cube[i], fitpars) for i in range(N)]
+        thetas = [hypercube(cube[i], fitpars, param_tools=param_tools) for i in range(N)]
     
     thetas = np.array(thetas)
 
@@ -1476,6 +1492,17 @@ def PT_handler(pt_config, picaso_class, param_tools): #WIP
         picaso_class.sonora(**params)
         #the resulting pt profile is stored inside a.inputs['atmosphere']['profile']
         pt_df = picaso_class.inputs['atmosphere']['profile']
+    
+    elif type == 'xarray_grid':
+        if not hasattr(param_tools, 'grid_name'):
+            raise Exception('Grid has not been pre-loaded')
+        else: 
+            grid_name = param_tools.grid_name
+        pressure = param_tools.pressure[grid_name][0]
+        picaso_class.add_pt(P=pressure)
+        param_tools.add_class(picaso_class)
+        temperature_function = getattr(param_tools, 'pt_xarray_grid')
+        pt_df = temperature_function(**pt_config['xarray_grid']['grid_kwargs'])
 
     else: #build pt profile using param tools built in to param_tools?
         picaso_class.add_pt(P_config = pt_config['pressure'])

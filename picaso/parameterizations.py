@@ -4,13 +4,13 @@ import os
 from scipy import interpolate
 from astropy.convolution import convolve, Gaussian1DKernel
 
-
+from .analyze import GridFitter, custom_interp
 from .justdoit import vj,u,get_cld_input_grid,special
 
 
 ## Parameterizations 
-class Parameterize():
-    def __init__(self, load_cld_optical = None, mieff_dir = None):
+class Parameterize(GridFitter):
+    def __init__(self, load_cld_optical = None, mieff_dir = None,model_dir=None,to_fit=None):
         """
         picaso_inputs_class : class picaso.justdoit.inputs 
             PICASO inputs class 
@@ -19,11 +19,24 @@ class Parameterize():
             see virga.available to see available species you can load 
         mieff_dir : str 
             If a condensate species is supplied to load_cld_optical, then you must also supplie a mieff directory
-            
+        model_dir : str     
+            If a model directory is specified then this will trigger a load of the grid
+            must be a picaso xarray grid.   
+        to_fit : str 
+            This is a kwarg for model_dir which specifies what spectra to load. If 
+            None it will load only the chemistry and temperature info from grid
         """
+        if os.path.isdir(str(model_dir)):
+            self.grid_name='init'
+            GridFitter.__init__(self, model_dir=model_dir, grid_name=self.grid_name, 
+                                model_type='xarrays', save_chem=True, verbose=False,
+                                to_fit=to_fit)
+            self.load_grid()
+
         self.mieff_dir=mieff_dir
         if isinstance(load_cld_optical, (str,list)):
             if isinstance(load_cld_optical,str): load_cld_optical=[load_cld_optical]
+            self.load_cld_optical = load_cld_optical
             if isinstance(mieff_dir, str):
                 if os.path.exists(mieff_dir):
                     self.qext, self.qscat, self.cos_qscat, self.nwave, self.radius, self.wave_in = {},{},{},{},{},{}
@@ -54,7 +67,14 @@ class Parameterize():
         self.nlevel = len(self.pressure_level )
         self.nlayer = self.nlevel -1 
         self.gravity_cgs = picaso_inputs_class.inputs['planet'].get('gravity',np.nan)
-
+    
+    def load_grid(self):
+        """
+        This is used for GridFitting to load a grid before conducting a retrieval run
+        """
+        self.add_grid(self.grid_name, 
+                      self.model_dir, to_fit=self.to_fit, save_chem=self.save_chem)
+        self.prep_gridtrieval(self.grid_name)
           
     def get_particle_dist(self,species,distribution,
                   lognorm_kwargs = {'sigma':np.nan, 'lograd':np.nan}, 
@@ -463,6 +483,58 @@ class Parameterize():
     def chem_chemeq_on_the_fly(self,cto_absolute, log_mh): 
         self.picaso.chemeq_on_the_fly(cto_absolute, log_mh)
         return self.picaso.inputs['atmosphere']['profile']
+    
+    def chem_xarray_grid(self, molecules,  **grid_kwargs):
+        """
+        Allows chemistry to be interpolated from picaso's standard xarray grid format.
+
+        Parameters
+        ----------
+        grid_name : str
+            Name of grid for storage and bookeeping 
+        molecules : list, str
+            list of molecules from which to pull parameters for 
+        grid_kwargs : dict 
+            dictionary of grid parameters and values on which to interpolate (must match grid)
+            e.g., {'logmh':0,'cto':0.55}
+        """
+        grid_name=self.grid_name
+        if self.grid_name not in self.interp_params or getattr(self, 'grid_name', None) != grid_name:
+            raise Exception('Grid needs to be pre-loaded into Parameterize')
+            #self.load_grid(grid_name, grid_location, to_fit=to_fit, save_chem=True)
+        grid_pars = self.interp_params[grid_name]['grid_parameters_unique']
+        final_goal = [grid_kwargs[k] for k in grid_pars.keys()]
+        pressure_grid = self.pressure_level
+        temp_grid = self.temperature_level
+        mixingratio_df = pd.DataFrame(dict(pressure=pressure_grid, temperature=temp_grid))
+        for imol in molecules:
+            chem_vals = custom_interp(final_goal, self, grid_name, to_interp='custom',
+                                      array_to_interp=self.interp_params[grid_name]['square_chem_grid'][imol])
+            mixingratio_df[imol] = chem_vals
+        return mixingratio_df
+
+    def pt_xarray_grid(self, **grid_kwargs):
+        """
+        Allows temperature to be interpolated from picaso's standard xarray grid format.
+
+        Parameters
+        ----------
+        grid_name : str
+            Name of grid for storage and bookeeping 
+        grid_kwargs : dict 
+            dictionary of grid parameters and values on which to interpolate (must match grid)
+            e.g., {'logmh':0,'cto':0.55}
+        """
+        grid_name=self.grid_name
+        if grid_name not in self.interp_params or getattr(self, 'grid_name', None) != grid_name:
+            raise Exception('Grid needs to be pre-loaded into Parameterize')
+            #self.load_grid(grid_name, grid_location, to_fit=to_fit, save_chem=True)
+        grid_pars = self.interp_params[grid_name]['grid_parameters_unique']
+        final_goal = [grid_kwargs[k] for k in grid_pars.keys()]
+        temp = custom_interp(final_goal, self, grid_name, to_interp='custom',
+                             array_to_interp=self.interp_params[grid_name]['square_temp_grid'])
+        pressure = self.pressure[grid_name][0]
+        return pd.DataFrame(dict(pressure=pressure, temperature=temp))
 
     def pt_madhu_seager_09_noinversion(self, alpha_1, alpha_2, P_1, P_3, T_3, beta=0.5):
         """"

@@ -103,7 +103,7 @@ beta=0.5
 [temperature.guillot]
 Teq=1000.0
 T_int=100.0
-logg1=-1
+logg1=-1.0
 logKir=-1.5
 alpha=0.5
 
@@ -111,8 +111,14 @@ alpha=0.5
 sonora_path='_default_/sonora_grids/bobcat'
 teff=1000.0
 
-#TODO turn below into a notice
-#options: 'visscher', 'free', 'userfile','chemeq_on_the_fly'; delete this block if already given chem in pt userfile : future updates 'fast_chem' vs 'photo_chem'
+[temperature.xarray_grid]
+model_dir='/Users/nbatalh1/Documents/data/models/wasp-17-v1'
+
+[temperature.xarray_grid.grid_kwargs]
+mh=0
+cto=1
+tint=200
+heat_redis=0.5
 
 [chemistry]
 method='visscher' 
@@ -170,6 +176,15 @@ log_mh=0.0
 [chemistry.userfile]
 filename='_default_/base_cases/HJ.pt'
 pd_kwargs={sep=' '}
+
+[chemistry.xarray_grid]
+model_dir='_custom_/wasp-17b/'
+
+[chemistry.xarray_grid.grid_kwargs]
+mh=0
+cto=1
+tint=200
+heat_redis=0.5
 
 [clouds]
 cloud1_type='hard_grey' #options: brewster_grey, brewster_mie, virga, flex_fsed, hard_grey, userfile
