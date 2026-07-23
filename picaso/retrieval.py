@@ -134,9 +134,92 @@ def remove_code_blocks(text, tag):
     return new_text
 
 ## BEGIN ALL RETR ANALYSIS TOOLS 
+def read_retrievals(dirr, params):
+    """
+    Function to parse both ultranest and dynesty results.
 
+    Parameters 
+    ----------
+    dirr : str
+        directory of the output (either contains dynesty.save or ultranest files)
+    params : list of str
+        list of parameter names
 
-def get_info(dirr,params):
+    Returns 
+    -------
+    dict
+    """
+    checkpoint_file = os.path.join(dirr, 'dynesty.save')
+    if os.path.exists(checkpoint_file):
+        return read_dynesty(dirr, params)
+    else: 
+        return read_ultranest(dirr, params)
+    
+def read_dynesty(dirr,params):
+    """
+    Function to parse ultranest results. Returns dictionary with 
+    - samples_equal : equally weighted samples that can be directly used for corner plots, finding quantiles, etc 
+    - max_logl : Bayesian Evidence - the lnZ of the max likelihood point 
+    - max_logl_point : the values of associated with the max likelihood point 
+    - med_intervals : median, errlo, errup of all the constrained parameters 
+    - param_names : list string of the parameter names 
+    - ultranest_out : all the raw output of ultranest 
+
+    Parameters 
+    ----------
+    dirr : str
+        directory of the ultranest output 
+    params : int
+        number of parameters 
+
+    Returns 
+    -------
+    dict 
+    """
+    checkpoint_file = os.path.join(dirr, 'dynesty.save')
+    sampler = dynesty.NestedSampler.restore(checkpoint_file)
+    results = sampler.results
+    samples = results.samples
+    logwt = results.logwt
+    logz = results.logz
+    logl = results.logl
+    
+    # Calculate weights and resample equal
+    weights = np.exp(logwt - logz[-1])
+    # Ensure weights sum to 1 to avoid possible NaN/Inf issues
+    sum_weights = np.sum(weights)
+    if sum_weights > 0:
+        weights = weights / sum_weights
+        
+    samples_rew = dynesty.utils.resample_equal(
+        samples, weights, rstate=np.random.RandomState(0))
+    
+    max_logl_idx = np.argmax(logl)
+    max_logl_point = samples[max_logl_idx]
+    max_logl_value = logl[max_logl_idx]
+    
+    errlo = pd.DataFrame(samples_rew, columns=params).quantile(.158655)
+    errup = pd.DataFrame(samples_rew, columns=params).quantile(.841345)
+    median = pd.DataFrame(samples_rew, columns=params).quantile(0.50)
+    summary = {}
+    for i in params:
+        summary[i+'_errlo'] = errlo[i]
+        summary[i+'_errup'] = errup[i]
+        summary[i+'_median'] = median[i]
+    summary = pd.DataFrame(summary, index=[0])
+    eval_at_med = [summary[i+'_'+'median'].values[0] for i in params]
+    
+    return {
+        'samples_equal': samples_rew,
+        'max_logl': max_logl_value,
+        'max_logl_point': max_logl_point,
+        'med_point': eval_at_med,
+        'med_intervals': summary,
+        'param_names': params,
+        'dynesty_out': results
+    }
+
+def read_ultranest(dirr,params):
     """
     Function to parse ultranest results. Returns dictionary with 
     - samples_equal : equally weighted samples that can be directly used for corner plots, finding quantiles, etc 
@@ -196,7 +279,101 @@ def get_info(dirr,params):
             'param_names': params,
             'ultranest_out':res[1]}
 
-def get_evaluations(samples_equal, max_logl, model, n_draws, regrid=False,pressure_bands=['temperature','H2O','CO2']):
+def get_bands(config, retrieval_results,
+              N=100,
+              pressure_bands=['temperature','H2O','CO2']):
+    
+    samples_equal = retrieval_results['samples_equal']
+    from .driver import check_model_samples
+    draws=np.random.randint(0, 
+                samples_equal.shape[0], N)
+    subset_samples = samples_equal[draws,:]
+
+    returns = {}
+
+    out = check_model_samples(
+        config, N=N, 
+        samples=subset_samples,
+        full_likelihood=True)
+    
+    returns['all_samples'] = out 
+    
+    xaxis = out['xdata']
+    returns['wavenumber'] = xaxis
+    returns['wavelength'] = 1e4/xaxis
+    band_spec = PredictionBand(xaxis)
+    paxis = out['profiles'][0]['pressure']
+    returns['pressure'] = paxis
+    band_profile = {ival :PredictionBand(paxis) for ival in pressure_bands}
+
+
+    returns['bands_spectra']={}
+    returns['bands_ptchem']={ival:{} for ival in pressure_bands}
+    for i in range(N):
+        band_spec.add(out['ymodel'][i])
+        for ival in pressure_bands: 
+            band_profile[ival].add(out['profiles'][i][ival].values)
+
+    for q ,key in zip([k/100/2 for k in [68.27, 95.45, 99.73]], ['1sig','2sig','3sig']): 
+        returns['bands_spectra'][key+'_lo'] = band_spec.get_line(0.5 - q).data
+        returns['bands_spectra'][key+'_hi'] = band_spec.get_line(0.5 + q).data
+        for ival in pressure_bands: 
+            returns['bands_ptchem'][ival][key+'_lo'] = band_profile[ival].get_line(0.5 - q).data
+            returns['bands_ptchem'][ival][key+'_hi'] = band_profile[ival].get_line(0.5 + q).data
+
+    returns['bands_spectra']['median'] = band_spec.get_line(0.5).data
+    for ival in pressure_bands: 
+        returns['bands_ptchem'][ival]['median'] = band_profile[ival].get_line(0.5).data
+
+    return returns 
+
+
+def plot_pressure_bands(returns,colors=pals.Muted5):
+    fig,ax=plt.subplots(1,2) 
+    #temperature 
+    for ii,ival in enumerate(returns['bands_ptchem'].keys()): 
+        if ival == 'temperature':
+            iax = 0 
+        else: 
+            iax = 1
+
+        for i in range(1,3):
+            lo=returns['bands_ptchem'][ival][f'{i}sig_lo']
+            hi= returns['bands_ptchem'][ival][f'{i}sig_hi']
+                
+            ax[iax].fill_betweenx(returns['pressure'], lo,
+                                        hi,
+                                        color=colors[ii],alpha=0.4)
+        ax[iax].plot(returns['bands_ptchem'][ival]['median'],
+                     returns['pressure'],
+                label='Median',color=colors[ii],linestyle='-.')
+    
+    for i in ax: i.set_yscale('log')
+    ax[1].set_xscale('log')
+    for i in ax: i.set_ylim([1e2,1e-6])
+    for i in ax: i.legend()
+    ax[0].set_ylabel('Pressure (bars)')
+    ax[0].set_xlabel('Temperature (Kelvin)')
+    ax[1].set_xlabel('Mixing Ratio (v/v)')
+    return ax 
+
+def plot_spectra_bands(returns,colors=pals.Muted5):
+    fig,ax=plt.subplots()
+    xgrid = returns['wavelength']
+    for i in range(1,3):
+        lo=returns['bands_spectra'][f'{i}sig_lo']
+        hi= returns['bands_spectra'][f'{i}sig_hi']
+        ax.fill_between(xgrid, lo,
+                                  hi,
+                                   color='red',alpha=0.2)
+    med=returns['bands_spectra']['median']
+    ax.plot(xgrid,med,color='black', label='Median')
+    ax.legend()
+    ax.set_xlabel('Wavelength')
+    return ax
+
+
+def get_evaluations_deprecate(samples_equal, max_logl, model, n_draws, regrid=False,pressure_bands=['temperature','H2O','CO2']):
     """
     Return model at the max logZ and also get the banded 1,2 and 3 sigma values for both spectra and chemistry. 
 
@@ -309,7 +486,7 @@ def get_evaluations(samples_equal, max_logl, model, n_draws, regrid=False,pressu
     returns['wavelength'] = um_xgrid
     return returns
 
-def get_chisq_max(at_evaluations, data_dict):
+def get_chisq_max_deprecate(at_evaluations, data_dict):
     """
     Compute the chi squared at the max logl spectra incl offsets and error inflation if it is included 
 
@@ -367,7 +544,7 @@ def get_chisq_max(at_evaluations, data_dict):
             'datay':datasorted_y,'datae':datasorted_e, 'chisq_per_datapt':chisq}
 
 
-def plot_spectra_bands(evaluations_dat, colors, ax=None,subplots_kwargs={},R=None):
+def plot_spectra_bands_deprecate(evaluations_dat, colors, ax=None,subplots_kwargs={},R=None):
     """
     Plots banded spectra and returns fig, ax
     """
@@ -404,7 +581,7 @@ def plot_spectra_bands(evaluations_dat, colors, ax=None,subplots_kwargs={},R=Non
     ax.set_xlabel('Wavelength')
     return fig,ax
     
-def plot_pressure_bands(evaluations_dat,colors,ax=None): 
+def plot_pressure_bands_deprecate(evaluations_dat,colors,ax=None): 
     """
     Plots pressure bands and returns fix, axs
     """
@@ -708,7 +885,7 @@ def plot_pair(samples, params, pretty_labels=None,ranges=None,figsize=(11, 11), 
 
 
 ## Parameterizations 
-class Parameterize_DEPRECATE():
+class Parameterize_deprecate():
     """
     """
     def __init__(self, load_cld_optical = None, mieff_dir = None):

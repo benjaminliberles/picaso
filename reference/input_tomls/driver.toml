@@ -35,7 +35,7 @@ phase = {value=0, unit='radian'} #planet phase angle
 phase_kwargs = {} #anything else for function phase in picaso
 
 [star]
-radius= {value=1, unit='Rsun'} 
+radius= {value=1.0, unit='Rsun'} 
 semi_major= {value=200.0, unit='AU'}
 type='grid' #'grid' or 'userfile'
 type_options=['grid', 'userfile']

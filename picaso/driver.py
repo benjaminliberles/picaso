@@ -401,7 +401,7 @@ def get_data(config):
         else: 
             
             for i,name in enumerate(data_dict.keys()):
-                if name not in resolution_dict:
+                if ((name not in resolution_dict) & ('None' not in str(instruments[i]))):
                     resolution_dict[name] = get_instrument_R_fits(instruments[i])
         
     # Leaving this out for now until there is rationale 
@@ -737,7 +737,7 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True,CON
     else:
         return y_model, y_mask, profiles
 
-def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT={}):
+def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT={},retrieval=True):
     """
     Vectorized log-likelihood.
 
@@ -760,7 +760,11 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
     n_samples = cube.shape[0]
 
     # Compute model spectra for all samples
-    y_model_dict, y_mask_dict = MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT,CONV_DICT=CONV_DICT)
+    mod_out = MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT,CONV_DICT=CONV_DICT,retrieval=retrieval)
+    if retrieval:
+        y_model_dict, y_mask_dict = mod_out
+    else: 
+        y_model_dict, y_mask_dict,profiles = mod_out
 
     offset_dict = config.get('retrieval',{}).get('offset',{})
     err_inf_dict = config.get('retrieval',{}).get('err_inf',{})
@@ -768,8 +772,17 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
 
     logls = []
 
+    if not retrieval: 
+        #prep storage of models and data for each sample 
+        ydat_all_2d = []
+        xdat_all_2d = []
+        ymod_all_2d = []
+        sigma_all_2d = []
+        chi_sqs = []
+
     for j in range(n_samples):
         ydat_all = []
+        xdat_all=[]
         ymod_all = []
         sigma_all = []
         extra_term_all = []
@@ -809,6 +822,8 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
             sigma_all.append(sigma)
             extra_term_all.append(extra_term)
             mask_all.append(y_mask)
+            if not retrieval: 
+                xdat_all.append(xdata)
 
         # check added vals after going through all data instnaces 
         should_add_extras = len(offset_dict)+len(scaling_dict)+len(err_inf_dict)
@@ -820,20 +835,42 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
         sigma_all = np.concatenate(sigma_all)
         extra_term_all = np.concatenate(extra_term_all)
         mask_all = np.concatenate(mask_all)
+        if not retrieval: xdat_all= np.concatenate(xdat_all)
 
         # mask all nans before computing the logl
         ydat_all = ydat_all[~mask_all]
         ymod_all = ymod_all[~mask_all]
         sigma_all = sigma_all[~mask_all]
         extra_term_all = extra_term_all[~mask_all]
+        if not retrieval: xdat_all= xdat_all[~mask_all]
 
         logl = -0.5 * np.sum((ydat_all - ymod_all) ** 2 / sigma_all + extra_term_all)
         logls.append(logl)
 
+        if not retrieval: 
+            simpl_chi_sq = np.sum((ydat_all-ymod_all)**2/sigma_all)/len(sigma_all)
+            #prep storage of models and data for each sample 
+            ydat_all_2d += [ydat_all]
+            ymod_all_2d += [ymod_all]
+            sigma_all_2d += [np.sqrt(sigma_all)]
+            chi_sqs += [simpl_chi_sq]
+
     logls = np.array(logls)
 
     # return scalar if only one input sample
-    return logls[0] if n_samples == 1 else logls
+    if retrieval:
+        return logls[0] if n_samples == 1 else logls
+    else: 
+        return {'logl':logls, 
+                'xdata':xdat_all,
+                'ydata':ydat_all_2d, 
+                'ymodel':ymod_all_2d, 
+                'edata':sigma_all_2d,
+                'chi_sq_per_pt':chi_sqs,
+                'model_dict':y_model_dict,
+                'mask_dict':y_mask_dict,
+                'profiles':profiles}
+
 
 def vrot(wvl, spectrum_array, v_array=0.0, eps=0.6, nr=10, ntheta=100, dif=0.0):
     """
@@ -1220,7 +1257,38 @@ def check_resume_exists(code, retrieval_output):
     else:
         return False
 
-def retrieve(config, param_tools):
+
+def retrieve(config=None, param_tools=None, driver_file=None):
+    """
+    This spawns a retrieval run based on config file. 
+    Required is config or driver_file. 
+
+    param_tools can be created from the config or driver_file or can be directly supplied for 
+    custom loading. 
+
+    Parameters 
+    ----------
+    config : dict 
+        configuration of run 
+    param_tools : class
+        parameterize class 
+    driver_file : str 
+        valide driver file (e.g., driver.toml)
+    """
+    #if a driver file is specified read it in
+    if driver_file: 
+        with open(driver_file, "rb") as f:
+            config = tomllib.load(f)  
+    if not config: 
+        raise Exception('config and driver_file are None. Please specify one or the other')
+    
+    if not param_tools: 
+        preload_cloud_miefs = find_values_for_key(config ,'condensate')
+        virga_mieff   = config['OpticalProperties'].get('virga_mieff',None)
+        model_dir = config['temperature'].get('xarray_grid',{}).get('model_dir',None)
+        param_tools = Parameterize(load_cld_optical=preload_cloud_miefs,
+                                    mieff_dir=virga_mieff,
+                                    model_dir=model_dir)        
 
     OPA = opannection(
         filename_db=config['OpticalProperties']['opacity_file'], #database(s)
@@ -1293,7 +1361,7 @@ def retrieve(config, param_tools):
         sampler = sampler_func(config, loglike_fn, hypercube_fn, ndims, pool, prior_config)
         return sampler
 
-def check_model_samples(config, N=100, samples=None):
+def check_model_samples(config, N=100, samples=None,full_likelihood=False):
     """
     Tests the prior distribution by generating models based on the provided configuration.
 
@@ -1345,10 +1413,13 @@ def check_model_samples(config, N=100, samples=None):
     thetas = np.array(thetas)
 
     DATA_DICT,CONV_DICT = get_data(config)
+    if full_likelihood: 
+        output_dict = log_likelihood(thetas[:N], fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=CONV_DICT,retrieval=False)
+        return output_dict 
+    else: 
+        models, masks, profiles = MODEL(thetas[:N], fitpars, config, OPA, param_tools, DATA_DICT, retrieval=False,CONV_DICT=CONV_DICT)
 
-    models, masks, profiles = MODEL(thetas[:N], fitpars, config, OPA, param_tools, DATA_DICT, retrieval=False,CONV_DICT=CONV_DICT)
-
-    return models, thetas, profiles
+        return models, thetas, profiles
 
 def setup_spectrum_class(config, opacity, param_tools, stage=None):
 
@@ -1771,4 +1842,9 @@ def load_template_config():
     config['chemistry']['userfile']['filename'] =config['chemistry']['userfile']['filename'].replace('_default_',os.getenv('picaso_refdata'))
     config['clouds']['cloud1']['userfile']['filename'] =config['clouds']['cloud1']['userfile']['filename'].replace('_default_',os.getenv('picaso_refdata'))
 
+    return config
+
+def load_config(driver_file): 
+    with open(driver_file, "rb") as f:
+        config = tomllib.load(f)
     return config
