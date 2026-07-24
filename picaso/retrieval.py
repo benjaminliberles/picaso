@@ -357,7 +357,7 @@ def plot_pressure_bands(returns,colors=pals.Muted5):
                                         color=colors[ii],alpha=0.4)
         ax[iax].plot(returns['bands_ptchem'][ival]['median'],
                      returns['pressure'],
-                label='Median',color=colors[ii],linestyle='-.')
+                label=rf'Median {ival}',color=colors[ii],linestyle='-.')
     
     for i in ax: i.set_yscale('log')
     ax[1].set_xscale('log')
