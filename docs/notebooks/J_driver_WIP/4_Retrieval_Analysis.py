@@ -122,7 +122,23 @@ plt.show()
 # %%
 returns = ret.get_bands(config, info,
                     pressure_bands=
-                    ['temperature','H2O','CO2'])
+                    ['temperature','H2O','CO2'],eval_maxlogl=True)
 
-f_chem = ret.plot_pressure_bands(returns)
-f_spec = ret.plot_spectra_bands(returns)
+f_chem,a_chem = ret.plot_pressure_bands(returns)
+f_spec,a_spec = ret.plot_spectra_bands(returns)
+
+# %% [markdown]
+# ## 7. Save and Bundle Results 
+#
+
+# %%
+filename = '/Users/nbatalh1/Documents/research/WASP17b/test_driver_retrievals/results/w17'
+xarray_bundle =ret.retrieval_results(returns, 
+    info, filename,round=3,
+    return_samples=True,
+    spectrum_tag='transit_depth',
+    spectrum_unit='cm**2/cm**2',
+    author="",contact="",model_description="",
+    code="PICASO")
+
+# %%

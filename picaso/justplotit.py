@@ -893,7 +893,7 @@ def numba_cumsum(mat):
         new_mat[:,i] = np.cumsum(mat[:,i])
     return new_mat
 
-def spectrum_hires(wno, alb,legend=None, **kwargs):
+def spectrum_hires_deprecate(wno, alb,legend=None, **kwargs):
     """Plot formated albedo spectrum
 
     Parameters
@@ -2021,7 +2021,7 @@ def animate_convergence(clima_out, picaso_bundle, opacity, calculation='thermal'
     plt.close()
     return ani
 
-def create_heat_map(data,rayleigh=True,extend=False,plot_height=300,plot_width=300,font_size="12px"):
+def create_heat_map_deprecate(data,rayleigh=True,extend=False,plot_height=300,plot_width=300,font_size="12px"):
     reverse = True
     data.columns.name = 'w0' 
     data.index.name = 'g0' 
@@ -2200,10 +2200,10 @@ def pt_adiabat(clima_out, input_class, opacityclass, plot=True):
     
     grad, cp = convec(clima_out['temperature'],clima_out['pressure'],
                       AdiabatBundle, Atmosphere,moist=moist)
-                      
-    plt.semilogy(clima_out['dtdp'], layer_p)
-    plt.semilogy(grad,layer_p) 
-    plt.ylim([1e4,1e-4]), 
-    plt.xlabel('dT/dP vs adiabat')
-    plt.ylabel('Pressure(bars)')
+    if plot: 
+        plt.semilogy(clima_out['dtdp'], layer_p)
+        plt.semilogy(grad,layer_p) 
+        plt.ylim([1e4,1e-4]), 
+        plt.xlabel('dT/dP vs adiabat')
+        plt.ylabel('Pressure(bars)')
     return cp, grad, clima_out['dtdp'], layer_p

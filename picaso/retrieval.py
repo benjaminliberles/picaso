@@ -281,7 +281,8 @@ def read_ultranest(dirr,params):
 
 def get_bands(config, retrieval_results,
               N=100,
-              pressure_bands=['temperature','H2O','CO2']):
+              pressure_bands=['temperature','H2O','CO2'],
+              eval_maxlogl=False):
     
     samples_equal = retrieval_results['samples_equal']
     from .driver import check_model_samples
@@ -296,7 +297,7 @@ def get_bands(config, retrieval_results,
         samples=subset_samples,
         full_likelihood=True)
     
-    returns['all_samples'] = out 
+    returns['all_samples_out'] = out 
     
     xaxis = out['xdata']
     returns['wavenumber'] = xaxis
@@ -324,7 +325,17 @@ def get_bands(config, retrieval_results,
     returns['bands_spectra']['median'] = band_spec.get_line(0.5).data
     for ival in pressure_bands: 
         returns['bands_ptchem'][ival]['median'] = band_profile[ival].get_line(0.5).data
-
+    
+    if eval_maxlogl: 
+        if 'max_logl_point' in retrieval_results and retrieval_results['max_logl_point'] is not None:
+            out_max = check_model_samples(
+                config, N=1,
+                samples=np.atleast_2d(retrieval_results['max_logl_point']),
+                full_likelihood=True)
+            returns['max_logl_spectra'] = out_max['ymodel'][0]
+            returns['max_logl_ptchem'] = out_max['profiles'][0]
+            returns['max_logl_chisq'] = out_max['chi_sq_per_pt'][0]
+            returns['all_maxlogl_out'] = out_max
     return returns 
 
 
@@ -355,7 +366,7 @@ def plot_pressure_bands(returns,colors=pals.Muted5):
     ax[0].set_ylabel('Pressure (bars)')
     ax[0].set_xlabel('Temperature (Kelvin)')
     ax[1].set_xlabel('Mixing Ratio (v/v)')
-    return ax 
+    return fig,ax 
 
 def plot_spectra_bands(returns,colors=pals.Muted5):
     fig,ax=plt.subplots()
@@ -370,7 +381,7 @@ def plot_spectra_bands(returns,colors=pals.Muted5):
     ax.plot(xgrid,med,color='black', label='Median')
     ax.legend()
     ax.set_xlabel('Wavelength')
-    return ax
+    return fig,ax
 
 
 def get_evaluations_deprecate(samples_equal, max_logl, model, n_draws, regrid=False,pressure_bands=['temperature','H2O','CO2']):
@@ -629,8 +640,115 @@ def plot_pressure_bands_deprecate(evaluations_dat,colors,ax=None):
     ax[1].set_xlabel('Mixing Ratio (v/v)')
     return fig,ax
     
+def retrieval_results(evaluations, info, filename,round=3,return_samples=True,
+                     spectrum_tag='transit_depth',spectrum_unit='cm**2/cm**2',
+                    author="",contact="",model_description="",code="PICASO"):
+    """
+    Returns all data output and creates xarray, pickle of samples, and sample plots 
+    """
+    coords = {}
+    coords["wavelength"]=(["wavelength"], evaluations['wavelength'],{'units': 'um'})
+    if 'pressure' in evaluations.keys() :
+        coords["pressure"]=(["pressure"], evaluations['pressure'],{'units': 'bar'})
+        
+    #maxlogL temperature pressure & chemistry
+    data_vars={}
+    all_mols = []
+    if 'pressure' in evaluations.keys() and 'max_logl_ptchem' in evaluations.keys():
+        for ikey in evaluations['max_logl_ptchem'].keys():
+            if 'temp' in ikey: 
+                unit='Kelvin'
+            else:
+                unit='v/v'
+                all_mols+=[ikey]
+            if 'pressure' not in ikey: 
+                data_vars['max_logl_'+ikey]=(["pressure"], evaluations['max_logl_ptchem'][ikey],{'units': unit})
 
-def data_output(evaluations, info, chisqout, filename,round=3,return_samples=True,
+    #maxlogL spectrum 
+    if 'max_logl_spectra' in evaluations.keys():
+        data_vars['max_logl_'+spectrum_tag]=(["wavelength"], evaluations['max_logl_spectra'],{'units': spectrum_unit})
+
+    #median ptchem
+    if 'pressure' in evaluations.keys() and 'bands_ptchem' in evaluations.keys():
+        for ikey in evaluations['bands_ptchem'].keys():
+            if 'temp' in ikey: 
+                unit='Kelvin'
+            else:
+                unit='v/v'
+        
+            data_vars['median_'+ikey]=(["pressure"], evaluations['bands_ptchem'][ikey]['median'],{'units': unit})
+            #siglo and hi 
+            for i in range(1,3):
+                data_vars[f'{i}sig_lo_'+ikey]=(["pressure"], evaluations['bands_ptchem'][ikey][f'{i}sig_lo'],{'units': unit})
+                data_vars[f'{i}sig_hi_'+ikey]=(["pressure"], evaluations['bands_ptchem'][ikey][f'{i}sig_hi'],{'units': unit})
+
+    #median spectra
+    if 'bands_spectra' in evaluations.keys():
+        data_vars['median_'+spectrum_tag]=(["wavelength"], evaluations['bands_spectra']['median'],{'units': spectrum_unit})
+        for i in range(1,3):
+            data_vars[f'{i}sig_lo_'+spectrum_tag]=(["wavelength"], evaluations['bands_spectra'][f'{i}sig_lo'],{'units': spectrum_unit})
+            data_vars[f'{i}sig_hi_'+spectrum_tag]=(["wavelength"], evaluations['bands_spectra'][f'{i}sig_hi'],{'units': spectrum_unit})
+    
+    #names
+    param_names =  info['param_names']
+    #maxlogL values 
+    maxlogl = info['max_logl_point']
+
+    #med errorbars 
+    summary = info['med_intervals']
+    strvals={}
+    
+    if isinstance(round,int):
+        round=[round]*len(param_names)
+        
+    for i,r in zip(param_names,round):
+        median = info['med_intervals'][i+'_median'].values[0]
+        lo = info['med_intervals'][i+'_errlo'].values[0]
+        hi = info['med_intervals'][i+'_errup'].values[0]
+        errlo = median-lo
+        errhi = hi-median 
+        median=int(median*(10**r))/(10**r)
+        errlo =int(errlo*(10**r))/(10**r)
+        errhi=int(errhi*(10**r))/(10**r)
+        strvals[i] = f'${median}'+'^{+' + f'{errhi}' + '}_{-' + f'{errlo}' + '}$'
+    
+    max_logl_chisq = evaluations['max_logl_chisq']
+
+    build_xarray = xr.Dataset(
+        data_vars=data_vars,
+        coords=coords,
+        attrs=dict(author=author,#required
+                   contact=contact,#required
+                   model=model_description,
+                   max_logl_chisq = max_logl_chisq,
+                   code=code, #required, in this case I used numpy to make my fake model.
+                   max_logl_params=json.dumps({ip:maxlogl[i] for i,ip in enumerate(param_names)},cls=JsonCustomEncoder),
+                   intervals_params=json.dumps({ip:strvals[ip] for i,ip in enumerate(param_names)},cls=JsonCustomEncoder),
+                   molecules = all_mols,
+                  ),
+    )
+    #output main datafile 
+    build_xarray.to_netcdf(filename+'_median_and_max_logl.nc')
+
+    #default figures 
+    f,a=plot_spectra_bands(evaluations, pals.Blues[3])
+    f.savefig(filename+'_spectra.png')
+
+    if 'pressure' in evaluations.keys() :
+        f,a=plot_pressure_bands(evaluations,pals.Greys[3])
+        f.savefig(filename+'_ptchem.png')
+
+    #return samples 
+    if return_samples:
+        pk.dump([info['param_names'],info['samples_equal']], open(filename+'_equally_weighted_samples.pk','wb'))
+
+    #finally make corner plot 
+    f, a = plot_pair(info['samples_equal'], info['param_names'])
+    f.savefig(filename+'_plotpair.png')
+    return build_xarray
+
+
+def data_output_deprecate(evaluations, info, chisqout, filename,round=3,return_samples=True,
                      spectrum_tag='transit_depth',spectrum_unit='cm**2/cm**2',
                     author="",contact="",model_description="",code="PICASO"):
     """
@@ -816,19 +934,46 @@ def plot_pair(samples, params, pretty_labels=None,ranges=None,figsize=(11, 11), 
     else: 
         raise Exception('Pretty labels must be None or dict')
 
-    if isinstance(intervals,type(None)):
-        intervals=None
+    if isinstance(intervals, type(None)):
+        intervals_dict = {}
+        for ip in params:
+            idx = params.index(ip)
+            vals = samples[:, idx]
+            q_lo, q_mid, q_hi = np.percentile(vals, [15.8655, 50.0, 84.1345])
+            errlo = q_mid - q_lo
+            errhi = q_hi - q_mid
+            err = min(errlo, errhi) if min(errlo, errhi) > 0 else max(errlo, errhi)
+            if err <= 0:
+                dec = 2
+            else:
+                log_err = np.log10(err)
+                if log_err >= 0:
+                    dec = max(0, 2 - int(np.floor(log_err)))
+                else:
+                    dec = int(np.ceil(-log_err)) + 1
+                dec = min(max(dec, 1), 6)
+            fmt = f"{{:.{dec}f}}"
+            val_str = fmt.format(q_mid)
+            errlo_str = fmt.format(errlo)
+            errhi_str = fmt.format(errhi)
+            intervals_dict[ip] = f"${val_str}_{{-{errlo_str}}}^{{+{errhi_str}}}$"
+        intervals = [intervals_dict[ip] for ip in params]
     elif isinstance(intervals,dict):
         intervals=[intervals[i] for i in sorted(params)]
     else: 
         raise Exception('Intervals must be None or dict')
 
     if isinstance(ranges,type(None)):
-        ranges=None
+        ranges_dict = {}
+        for ip in params:
+            idx = params.index(ip)
+            vals = samples[:, idx]
+            ranges_dict[ip] = [np.min(vals), np.max(vals)]
+        ranges = [ranges_dict[ip] for ip in params]
     elif isinstance(ranges,dict):
-        ranges=[ranges[i] for i in sorted(params)]
+        ranges=[ranges[i] for i in params]
     else: 
-        raise Exception('Intervals must be None or dict')
+        raise Exception('Ranges must be None or dict')
 
 
     if len(params)*len(params)>40:
@@ -1589,7 +1734,7 @@ def picaso_format(opd, w0, g0, wavenumber_grid, pressure_grid ,
                     if (isinstance(p_decay,type(None)) & isinstance(opd_profile,type(None))):
                         OPD+=[opd[w]]
                     elif not (isinstance(p_decay,type(None))): 
-                        OPD+=[p_decay[j]/np.max(p_decay)*opd[w]]
+                       OPD+=[p_decay[j]/np.max(p_decay)*opd[w]]
                     elif not (isinstance(opd_profile,type(None))): 
                         OPD+=[opd_profile[j]*(opd[w]/np.max(opd))]
                     WW0+=[w0[w]]

@@ -8,7 +8,7 @@ from streamlit_bokeh import streamlit_bokeh
 
 import picaso.driver as go
 from picaso import justplotit as jpi
-from  picaso import retrieval as ret
+from picaso import retrieval as ret
 
 # HEADER
 st.logo('https://natashabatalha.github.io/picaso/_images/logo.png', size="large", link="https://github.com/natashabatalha/picaso")
@@ -34,6 +34,15 @@ if uploaded_file is not None:
     
     retrieval_dir = st.text_input("Retrieval Output Directory", value=ret_out)
     
+    # Check if retrieval directory has changed to clear state
+    if "last_retrieval_dir" in st.session_state and st.session_state["last_retrieval_dir"] != retrieval_dir:
+        st.session_state.pop("retrieval_info", None)
+        st.session_state.pop("max_logl_out", None)
+        st.session_state.pop("chi2", None)
+        st.session_state.pop("fig_spec", None)
+        st.session_state.pop("last_retrieval_dir", None)
+        st.session_state.pop("banded_returns", None)
+    
     if retrieval_dir:
         if not os.path.exists(retrieval_dir):
             st.error(f"The path '{retrieval_dir}' does not exist on this machine.")
@@ -53,20 +62,13 @@ if uploaded_file is not None:
                         info = ret.read_retrievals(retrieval_dir, params)
                         st.success("Successfully loaded retrieval outputs!")
                         
-                        # 3) Display corner plot
-                        st.subheader("Corner Plot")
-                        fig, ax = ret.plot_pair(info['samples_equal'], info['param_names'])
-                        st.pyplot(fig)
-                        
-                        # 5) Max log likelihood model and plot against data
-                        st.subheader("Max Log Likelihood Model vs Data")
                         max_logl_point = info['max_logl_point']
                         out = go.check_model_samples(
                             config, N=1, 
                             samples=np.atleast_2d(max_logl_point),
                             full_likelihood=True
-                            )
-                        chi2=out['chi_sq_per_pt'][0]        
+                        )
+                        chi2 = out['chi_sq_per_pt'][0]        
                         # Create spectrum and errorbar plots
                         fig_spec = jpi.spectrum(
                                     [out['xdata']], 
@@ -76,22 +78,54 @@ if uploaded_file is not None:
                                 )
                         fig_spec = jpi.plot_errorbar(1e4/out['xdata'], out['ydata'][0], out['edata'][0], 
                                                      plot=fig_spec)
-                                
-                        streamlit_bokeh(fig_spec, theme="streamlit", key=f"spectrum_maxlogl")
+                        
+                        st.session_state['retrieval_info'] = info
+                        st.session_state['max_logl_out'] = out
+                        st.session_state['chi2'] = chi2
+                        st.session_state['fig_spec'] = fig_spec
+                        st.session_state['last_retrieval_dir'] = retrieval_dir
+                        st.session_state.pop("banded_returns", None)
+                        st.rerun()
+
+                # Conditionally render results if they are in the session state
+                if st.session_state.get('retrieval_info') is not None and st.session_state.get('last_retrieval_dir') == retrieval_dir:
+                    info = st.session_state['retrieval_info']
+                    out = st.session_state['max_logl_out']
+                    chi2 = st.session_state['chi2']
+                    fig_spec = st.session_state['fig_spec']
+
+                    # 3) Display corner plot
+                    st.subheader("Corner Plot")
+                    fig, ax = ret.plot_pair(info['samples_equal'], info['param_names'])
+                    st.pyplot(fig)
                     
-                        st.subheader("Generate Banded Profiles and Spectra")
-                        N = st.slider('Number of Samples',value=10, min_value=10, max_value=1000)
-                        options = [i for i in out['profiles'][0].keys() if 'pressure' not in i]
-                        selected_pressure_bands = st.multiselect("Generate bands for: ", options, 
-                                                    default=options[0:2])
+                    # 5) Max log likelihood model and plot against data
+                    st.subheader("Max Log Likelihood Model vs Data")
+                    streamlit_bokeh(fig_spec, theme="streamlit", key=f"spectrum_maxlogl")
+                
+                    st.subheader("Generate Banded Profiles and Spectra")
+                    N = st.slider('Number of Samples', value=10, min_value=10, max_value=1000)
+                    options = [i for i in out['profiles'][0].keys() if 'pressure' not in i]
+                    selected_pressure_bands = st.multiselect(
+                        "Generate bands for: ", 
+                        options, 
+                        default=options[0:2] if 'selected_pressure_bands_widget' not in st.session_state else None,
+                        key="selected_pressure_bands_widget"
+                    )
 
-                        if st.button("Generate"):
-                            with st.spinner(f"Running {N} evaluations..."):
-                                returns = ret.get_bands(config, info,
-                                                    pressure_bands=selected_pressure_bands)
+                    if st.button("Generate"):
+                        with st.spinner(f"Running {N} evaluations..."):
+                            returns = ret.get_bands(
+                                config, info,
+                                N=N,
+                                pressure_bands=selected_pressure_bands
+                            )
+                            st.session_state['banded_returns'] = returns
+                            st.rerun()
 
-                                f_spec, a_spec = ret.plot_spectra_bands(returns)
-                                st.pyplot(f_spec)
-                                f_chem, a_chem = ret.plot_pressure_bands(returns)
-                                st.pyplot(f_chem)
-                            
+                    if 'banded_returns' in st.session_state:
+                        returns = st.session_state['banded_returns']
+                        f_spec, a_spec = ret.plot_spectra_bands(returns)
+                        st.pyplot(f_spec)
+                        f_chem, a_chem = ret.plot_pressure_bands(returns)
+                        st.pyplot(f_chem)
