@@ -44,7 +44,7 @@ from streamlit_bokeh import streamlit_bokeh
 
 import picaso.driver as go
 from picaso import justdoit as jdi 
-from picaso import justplotit as jpi
+from picaso import WIP_justplotit as jpi
 from picaso.parameterizations import Parameterize
 
 # =======================================
@@ -452,7 +452,8 @@ def render_pressure_and_temperature(param_tools=None):
     # GRAPH PRESSURE-TEMPERATURE
     if st.button('See Pressure-Temperature plot'):
         data_class = run_spectrum_class(param_tools, 'temperature')
-        streamlit_bokeh(jpi.pt({'layer': data_class.inputs['atmosphere']['profile']}))
+        analyzer = jpi.Analyzer({'layer': data_class.inputs['atmosphere']['profile']}, backend='plotly')
+        st.plotly_chart(analyzer.pt(), use_container_width=True)
     return param_tools
 # ============================================
 # INPUT CHEMISTRY INFORMATION
@@ -621,7 +622,8 @@ def render_chemistry():
                 if key != 'pressure' or key != 'temperature':
                     chem_df[key] = chem_df[key]
             full_output = dict({'layer':{'pressure': chem_df['pressure'], 'mixingratios': chem_df}})
-            streamlit_bokeh(jpi.mixing_ratio(full_output))
+            analyzer = jpi.Analyzer(full_output, backend='plotly')
+            st.plotly_chart(analyzer.mixing_ratio(), use_container_width=True)
         except Exception as e:
             st.warning('Make sure you have configured chemistry and temperature.')
             st.write(e)
@@ -719,8 +721,27 @@ def render_clouds():
                     wavelength = 1e4/wavenumber
                     pressure = df['pressure'].unique()
                     nlayer = len(pressure)
-                    bokeh_plot = jpi.plot_cld_input(nwno, nlayer, df=df,pressure=pressure, wavelength=wavelength)
-                    st.write(bokeh_plot)
+                    
+                    # reconstruct expected structured full_output for Analyzer.cloud()
+                    # It needs: full_output['layer']['cloud'] with keys 'w0', 'opd', 'g0'
+                    # and full_output['layer']['pressure'] and full_output['wavenumber']
+                    w0_reshaped = np.reshape(df['w0'].values, (nlayer, nwno))
+                    opd_reshaped = np.reshape(df['opd'].values, (nlayer, nwno))
+                    g0_reshaped = np.reshape(df['g0'].values, (nlayer, nwno))
+                    
+                    full_output_cloud = {
+                        'layer': {
+                            'pressure': pressure,
+                            'cloud': {
+                                'w0': w0_reshaped,
+                                'opd': opd_reshaped,
+                                'g0': g0_reshaped
+                            }
+                        },
+                        'wavenumber': wavenumber
+                    }
+                    analyzer = jpi.Analyzer(full_output_cloud, backend='plotly')
+                    st.plotly_chart(analyzer.cloud(), use_container_width=True)
                 else:
                     st.warning("No cloud profile generated. Please check cloud configuration.")
             except Exception as e:
@@ -810,7 +831,7 @@ def run_spectrum():
                 range_str = ", ".join([f"{r[0]:.2f}-{r[1]:.2f} um" if r[0] != r[1] else f"{r[0]:.2f} um" for r in nan_ranges])
                 st.warning(f"Warning: Encoutered {nan_count} NaNs out of {total_count} model points. NaN wavelength ranges: {range_str}")
 
-            spec_fig = jpi.spectrum(wavenumber, albedo_or_fluxes, plot_width=500, x_range=wavelength_range)
+            spec_fig = jpi.spectrum(wavenumber, albedo_or_fluxes, plot_width=500, x_range=wavelength_range, backend='plotly')
             
             st.session_state['spectrum_results'] = {
                 'df': df,
@@ -828,7 +849,7 @@ def run_spectrum():
     if 'spectrum_results' in st.session_state:
         results = st.session_state['spectrum_results']
         # plot spectrum
-        streamlit_bokeh(results['spec_fig'], theme="streamlit", key="spectrum")
+        st.plotly_chart(results['spec_fig'], use_container_width=True)
 
         # DOWNLOAD BUTTONS
         col1, col2 = st.columns(2)
@@ -1088,80 +1109,104 @@ def sampler(prior_set_items, nsamples):
         })
     return ALL_TOMLS, save_all_class_pt
 
-def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spectrum=True):
-    ################################
-    # MIXING RATIO GRAPH 
-    ################################
-    mixing_ratio_kwargs = {}
-    mixing_ratio_kwargs['y_axis_label'] = mixing_ratio_kwargs.get('y_axis_label','Pressure(Bars)')
-    mixing_ratio_kwargs['x_axis_label'] = mixing_ratio_kwargs.get('x_axis_label','Mixing Ratio(v/v)')
-    mixing_ratio_kwargs['y_axis_type'] = mixing_ratio_kwargs.get('y_axis_type','log')
-    mixing_ratio_kwargs['x_axis_type'] = mixing_ratio_kwargs.get('x_axis_type','log') 
-    mixing_ratio_bokeh_fig = figure(**mixing_ratio_kwargs)
-    molecules = save_all_class_pt[0]['molecules']
-    cols = pals.magma(min([len(molecules),MOLECULES_LIMIT]))
-    legend_it=[]
+def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples, run_clouds=True, run_spectrum=True):
+    import plotly.graph_objects as go_plotly
+    import plotly.express as px
+    from plotly.subplots import make_subplots
 
-    moles = {mol:[] for mol in molecules}
-    pressure_temperature_fig, axes = plt.subplots(figsize=(15, 5))
-    clouds_fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
-
+    ################################
+    # PRESSURE TEMPERATURE GRAPH
+    ################################
+    pressure_temperature_fig = go_plotly.Figure()
     for i in range(nsamples):
         pressure = save_all_class_pt[i]['pressure']
         temperature = save_all_class_pt[i]['temperature']
+        pressure_temperature_fig.add_trace(go_plotly.Scatter(
+            x=temperature, y=pressure,
+            mode='lines',
+            line=dict(color='red', width=1.5),
+            opacity=0.3,
+            showlegend=False
+        ))
+    pressure_temperature_fig.update_xaxes(title_text="Temperature (K)")
+    pressure_temperature_fig.update_yaxes(type="log", title_text="Pressure(Bars)", autorange="reversed")
+    pressure_temperature_fig.update_layout(title=f"Pressure-Temperature Profiles ({nsamples} Samples)")
+
+    ################################
+    # MIXING RATIO GRAPH
+    ################################
+    mixing_ratio_fig = go_plotly.Figure()
+    molecules = save_all_class_pt[0]['molecules']
+    
+    cols = px.colors.qualitative.Plotly
+    shown_legends = set()
+    for i in range(nsamples):
+        pressure = save_all_class_pt[i]['pressure']
         mixingratios = save_all_class_pt[i]['mixingratios']
-        axes.semilogy(temperature,pressure, color='red', alpha=0.1)
-        if run_clouds:
+        for idx, mol in enumerate(molecules):
+            color = cols[idx % len(cols)]
+            show_leg = (mol not in shown_legends)
+            mixing_ratio_fig.add_trace(go_plotly.Scatter(
+                x=mixingratios[mol], y=pressure,
+                mode='lines',
+                name=mol,
+                line=dict(color=color, width=2),
+                opacity=0.3,
+                showlegend=show_leg,
+                legendgroup=mol
+            ))
+            if show_leg:
+                shown_legends.add(mol)
+    mixing_ratio_fig.update_xaxes(type="log", title_text="Mixing Ratio(v/v)", range=[-20, 1])
+    mixing_ratio_fig.update_yaxes(type="log", title_text="Pressure(Bars)", autorange="reversed")
+    mixing_ratio_fig.update_layout(title="Mixing Ratios")
+
+    ################################
+    # CLOUDS GRAPH
+    ################################
+    clouds_fig = None
+    if run_clouds:
+        clouds_fig = make_subplots(
+            rows=1, cols=3, 
+            subplot_titles=("Single scattering albedo vs Pressure", "Asymmetry vs Pressure", "Optical Depth vs Pressure")
+        )
+        for i in range(nsamples):
             cloud_df = save_all_class_pt[i]['cloudprofile']
-            cloud_pressure = cloud_df['pressure']
+            cloud_pressure = cloud_df['pressure'].unique()
             wavenumber = cloud_df['wavenumber'].unique()
 
             nwno = len(wavenumber)
-            cloud_pressure = cloud_df['pressure'].unique()
-            nlayer = len(cloud_df['pressure'].unique())
+            nlayer = len(cloud_pressure)
 
-            w0 = np.reshape(cloud_df['w0'].values,(nlayer,nwno))
-            opd = np.reshape(cloud_df['opd'].values,(nlayer,nwno)) + 1e-60
-            g0 = np.reshape(cloud_df['g0'].values,(nlayer,nwno))
+            w0 = np.reshape(cloud_df['w0'].values, (nlayer, nwno))
+            opd = np.reshape(cloud_df['opd'].values, (nlayer, nwno)) + 1e-60
+            g0 = np.reshape(cloud_df['g0'].values, (nlayer, nwno))
 
-            ssa1d = np.mean(w0,axis=1) # ssa [nlayer, nwavelength]
-            g01d = np.mean(g0,axis=1)
-            opd1d = np.mean(opd,axis=1)
+            ssa1d = np.mean(w0, axis=1)
+            g01d = np.mean(g0, axis=1)
+            opd1d = np.mean(opd, axis=1)
 
-            ax1.semilogy(ssa1d, cloud_pressure)
-            ax1.invert_yaxis()
-            ax1.set_title("Single scattering albedo vs Pressure")
-            ax2.semilogy(g01d, cloud_pressure)
-            ax2.invert_yaxis()
-            ax2.set_title("Asymmetry vs Pressure")
-            ax3.loglog(opd1d, cloud_pressure)
-            ax3.set_title("Optical Depth vs Pressure")
-            ax3.invert_yaxis()
-        for mol, c in zip(molecules, cols):
-            f = mixing_ratio_bokeh_fig.line(mixingratios[mol],pressure, color=c, line_width=2,
-                muted_color=c, muted_alpha=0.05, line_alpha=1)
-            moles[mol].append(f)
-    for mol in moles.keys():
-        legend_it.append((mol, moles[mol]))
-    legend = Legend(items=legend_it, location=(0, -20))
-    legend.click_policy="mute"
-    mixing_ratio_bokeh_fig.add_layout(legend, 'left')
-    mixing_ratio_bokeh_fig.y_range.flipped = True
-    axes.set_xlabel("Temperature (K)") 
-    axes.set_ylabel("Log Pressure(Bars)")
-    axes.set_title(f"Pressure-Temperature Profiles ({nsamples} Samples)")
-    axes.invert_yaxis()
-    axes.set_yscale('log')
+            clouds_fig.add_trace(go_plotly.Scatter(x=ssa1d, y=cloud_pressure, mode='lines', line=dict(color='blue', width=1.5), opacity=0.3, showlegend=False), row=1, col=1)
+            clouds_fig.add_trace(go_plotly.Scatter(x=g01d, y=cloud_pressure, mode='lines', line=dict(color='green', width=1.5), opacity=0.3, showlegend=False), row=1, col=2)
+            clouds_fig.add_trace(go_plotly.Scatter(x=opd1d, y=cloud_pressure, mode='lines', line=dict(color='red', width=1.5), opacity=0.3, showlegend=False), row=1, col=3)
+            
+        clouds_fig.update_yaxes(type="log", autorange="reversed")
+        clouds_fig.update_xaxes(title_text="Single Scattering Albedo", row=1, col=1)
+        clouds_fig.update_xaxes(title_text="Asymmetry", row=1, col=2)
+        clouds_fig.update_xaxes(type="log", title_text="Optical Depth", row=1, col=3)
+        clouds_fig.update_layout(height=500, width=1200)
 
+    ################################
+    # SPECTRUM GRAPH
+    ################################
     spectrum_fig = None
     if run_spectrum:
-        # Get data and convolution dictionaries
         DATA_DICT, CONV_DICT = go.get_data(config)
         
         WNO_LIST = []
         ALB_LIST = []
 
-
+        lolg_nan = 0
         for idx, prior_toml in enumerate(ALL_TOMLS):
             clean_dict = clean_dictionary(prior_toml)
             df = go.run(driver_dict=clean_dict)
@@ -1173,7 +1218,6 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
                                          config=clean_dict, 
                                          conv_dict=CONV_DICT)
 
-            # Aggregate all observations if multiple exist
             for key in processed:
                 x,y,e = DATA_DICT[key]
                 x_rebinned, y_rebinned, mask = processed[key]
@@ -1191,21 +1235,18 @@ def sample_plots(ALL_TOMLS, save_all_class_pt, nsamples,run_clouds=True, run_spe
                     nan_ranges = get_nan_ranges(1e4/x_rebinned, mask)
                     range_str = ", ".join([f"{r[0]:.2f}-{r[1]:.2f} um" if r[0] != r[1] else f"{r[0]:.2f} um" for r in nan_ranges])
 
-
                 if np.any(mask) and np.isnan(mockliklihood):
                     st.warning(f'Sample {idx+1}: Tried masking {nan_count} points out of {total_count} model points but NaN still persisting in mock likelihood for {key}. Masked points are here: {range_str}')
                 elif np.any(mask) and not np.isnan(mockliklihood):
                     st.warning(f'Sample {idx+1}: Masked {nan_count} points out of {total_count} model points but with the mask I can successful compute a likelihood for {key}. Masked points are here: {range_str}')
 
-        spectrum_fig = jpi.spectrum(WNO_LIST, ALB_LIST, palette=[(255,0,0,0.3)], plot_width=500,x_range=wavelength_range)
+        spectrum_fig = jpi.spectrum(WNO_LIST, ALB_LIST, palette=['rgba(255,0,0,0.3)'], plot_width=500, x_range=wavelength_range, backend='plotly')
         
         for i in DATA_DICT.keys(): 
             x,y,e = DATA_DICT[i]
-            spectrum_fig = jpi.plot_errorbar(1e4/x,y,e,plot=spectrum_fig)
-            _, y_rebinned, mask = processed[i]
-            # mask all nans before computing chi-sq
+            spectrum_fig = jpi.plot_errorbar(1e4/x,y,e,plot=spectrum_fig, backend='plotly')
 
-    return pressure_temperature_fig, mixing_ratio_bokeh_fig, clouds_fig, spectrum_fig
+    return pressure_temperature_fig, mixing_ratio_fig, clouds_fig, spectrum_fig
 
 def render_additional_retrieval_parameters(parameter_dict, config):
     #adds other retrieval parameters: vsini, data offsets, error inflation
@@ -1313,21 +1354,22 @@ def render_retrievals(spectrum_figure=None):
                 basefig = jpi.spectrum(x, y, 
                                        plot_width=500, 
                                        x_range=wavelength_range,
-                                       legend=l)
+                                       legend=l,
+                                       backend='plotly')
             else:
                 basefig = None
                 
             fig = basefig
             for i in data_dict.keys():
                 x,y,e=data_dict[i]
-                fig = jpi.plot_errorbar(1e4/x,y,e,plot=fig)
+                fig = jpi.plot_errorbar(1e4/x,y,e,plot=fig, backend='plotly')
             
             st.session_state['data_plot'] = fig
         except Exception as e:
             st.error(f"Error parsing data: {e}")
 
     if 'data_plot' in st.session_state:
-        streamlit_bokeh(st.session_state['data_plot'], key="data_verification_plot")
+        st.plotly_chart(st.session_state['data_plot'], use_container_width=True)
 
     # ADD Additional retrieval parameters?
     parameter_handler = render_additional_retrieval_parameters({}, config)
@@ -1395,13 +1437,13 @@ def render_retrievals(spectrum_figure=None):
     retrieval_stage_state_manager['done_configuring_priors'] =  st.selectbox("Done Configuring Priors", ("Yes", "No"), index=None)
     if retrieval_stage_state_manager['done_configuring_priors'] == 'Yes':
         ALL_TOMLS, save_all_class_pt = sampler(prior_set_items, nsamples)        
-        pressure_temperature_fig, mixing_ratio_bokeh_fig, clouds_fig, _ = sample_plots(ALL_TOMLS, save_all_class_pt, nsamples, run_spectrum=False, run_clouds=('clouds' in config))
+        pressure_temperature_fig, mixing_ratio_fig, clouds_fig, _ = sample_plots(ALL_TOMLS, save_all_class_pt, nsamples, run_spectrum=False, run_clouds=('clouds' in config))
 
         # PLOT PT, MR, CLOUDS
-        st.pyplot(pressure_temperature_fig)
-        streamlit_bokeh(mixing_ratio_bokeh_fig)
-        if 'clouds' in config:
-            st.pyplot(clouds_fig)
+        st.plotly_chart(pressure_temperature_fig, use_container_width=True)
+        st.plotly_chart(mixing_ratio_fig, use_container_width=True)
+        if 'clouds' in config and clouds_fig is not None:
+            st.plotly_chart(clouds_fig, use_container_width=True)
 
         st.divider()
 
@@ -1409,7 +1451,7 @@ def render_retrievals(spectrum_figure=None):
         retrieval_stage_state_manager['see_prior_spectrums'] =  st.selectbox("Run Samples for Full Spectrums?", ("Yes", "No"), index=None)
         if retrieval_stage_state_manager['see_prior_spectrums'] == 'Yes':
             _, _, _, spectrum_fig = sample_plots(ALL_TOMLS, save_all_class_pt, nsamples, run_clouds=('clouds' in config))
-            streamlit_bokeh(spectrum_fig)
+            st.plotly_chart(spectrum_fig, use_container_width=True)
     
     
     

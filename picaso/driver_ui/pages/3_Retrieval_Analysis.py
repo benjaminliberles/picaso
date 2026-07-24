@@ -72,7 +72,7 @@ if uploaded_file is not None:
                         # Create spectrum and errorbar plots
                         fig_spec = jpi.spectrum(
                                     [out['xdata']], 
-                                    [out['ydata'][0]], 
+                                    [out['ymodel'][0]], 
                                     legend=["Max LogL Model"], 
                                     title=f"Chi-sq = {chi2:.2f}"
                                 )
@@ -93,11 +93,84 @@ if uploaded_file is not None:
                     out = st.session_state['max_logl_out']
                     chi2 = st.session_state['chi2']
                     fig_spec = st.session_state['fig_spec']
+                    params = info['param_names']
 
                     # 3) Display corner plot
                     st.subheader("Corner Plot")
-                    fig, ax = ret.plot_pair(info['samples_equal'], info['param_names'])
+                    
+                    # Create editable dataframe for pretty labels and ranges
+                    with st.expander("Customize Corner Plot Labels and Ranges", expanded=False):
+                        st.markdown("Customize parameter labels and ranges for the corner plot.")
+                        
+                        # Initialize or load parameters from session state
+                        if "corner_params_df" not in st.session_state or st.session_state.get("last_retrieval_dir_params") != retrieval_dir:
+                            default_labels = []
+                            default_mins = []
+                            default_maxs = []
+                            for i, ip in enumerate(params):
+                                default_labels.append(ip)
+                                vals = info['samples_equal'][:, i]
+                                default_mins.append(float(np.min(vals)))
+                                default_maxs.append(float(np.max(vals)))
+                            
+                            st.session_state["corner_params_df"] = pd.DataFrame({
+                                "Parameter": params,
+                                "Pretty Label": default_labels,
+                                "Min Range": default_mins,
+                                "Max Range": default_maxs
+                            })
+                            st.session_state["last_retrieval_dir_params"] = retrieval_dir
+                        
+                        edited_df = st.data_editor(
+                            st.session_state["corner_params_df"],
+                            key="corner_params_editor",
+                            disabled=["Parameter"]
+                        )
+                        st.session_state["corner_params_df"] = edited_df
+                    
+                    # Construct pretty_labels and ranges dictionaries
+                    pretty_labels = {}
+                    ranges = {}
+                    for _, row in edited_df.iterrows():
+                        param_name = row["Parameter"]
+                        pretty_labels[param_name] = row["Pretty Label"]
+                        ranges[param_name] = [row["Min Range"], row["Max Range"]]
+
+                    fig, ax = ret.plot_pair(
+                        info['samples_equal'], 
+                        info['param_names'], 
+                        pretty_labels=pretty_labels, 
+                        ranges=ranges
+                    )
                     st.pyplot(fig)
+
+                    # Export figure options for manuscript publication
+                    st.markdown("#### Export Corner Plot")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        dpi_val = st.number_input("Resolution (DPI)", value=300, min_value=100, max_value=1200, step=100)
+                    with col2:
+                        img_format = st.selectbox("Image Format", options=["png", "pdf", "svg"], index=0)
+                    
+                    # Convert matplotlib figure to bytes for download
+                    import io
+                    buf = io.BytesIO()
+                    fig.savefig(buf, format=img_format, dpi=dpi_val, bbox_inches='tight')
+                    buf.seek(0)
+                    
+                    col_save1, col_save2 = st.columns(2)
+                    with col_save1:
+                        st.download_button(
+                            label="Download High-Resolution Corner Plot",
+                            data=buf,
+                            file_name=f"corner_plot.{img_format}",
+                            mime=f"image/{img_format}" if img_format != "svg" else "image/svg+xml"
+                        )
+                    with col_save2:
+                        if st.button("Save Figure Locally in Retrieval Directory"):
+                            local_path = os.path.join(retrieval_dir, f"corner_plot_manuscript.{img_format}")
+                            fig.savefig(local_path, format=img_format, dpi=dpi_val, bbox_inches='tight')
+                            st.success(f"Successfully saved figure locally at: `{local_path}`")
                     
                     # 5) Max log likelihood model and plot against data
                     st.subheader("Max Log Likelihood Model vs Data")

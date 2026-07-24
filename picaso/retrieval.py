@@ -928,11 +928,14 @@ def plot_pair(samples, params, pretty_labels=None,ranges=None,figsize=(11, 11), 
     az.style.use('default')
 
     if isinstance(pretty_labels,type(None)):
-        pretty_labels=sorted(params)
+        pretty_labels=params
     elif isinstance(pretty_labels,dict):
-        pretty_labels=[pretty_labels[i] for i in sorted(params)]
+        pretty_labels=[pretty_labels[i] for i in params]
+    elif isinstance(pretty_labels, list):
+        pass
     else: 
-        raise Exception('Pretty labels must be None or dict')
+        raise Exception('Pretty labels must be None, dict, or list')
+
 
     if isinstance(intervals, type(None)):
         intervals_dict = {}
@@ -959,9 +962,12 @@ def plot_pair(samples, params, pretty_labels=None,ranges=None,figsize=(11, 11), 
             intervals_dict[ip] = f"${val_str}_{{-{errlo_str}}}^{{+{errhi_str}}}$"
         intervals = [intervals_dict[ip] for ip in params]
     elif isinstance(intervals,dict):
-        intervals=[intervals[i] for i in sorted(params)]
+        intervals=[intervals[i] for i in params]
+    elif isinstance(intervals, list):
+        pass
     else: 
-        raise Exception('Intervals must be None or dict')
+        raise Exception('Intervals must be None, dict, or list')
+
 
     if isinstance(ranges,type(None)):
         ranges_dict = {}
@@ -972,8 +978,11 @@ def plot_pair(samples, params, pretty_labels=None,ranges=None,figsize=(11, 11), 
         ranges = [ranges_dict[ip] for ip in params]
     elif isinstance(ranges,dict):
         ranges=[ranges[i] for i in params]
+    elif isinstance(ranges, list):
+        pass
     else: 
-        raise Exception('Ranges must be None or dict')
+        raise Exception('Ranges must be None, dict, or list')
+
 
 
     if len(params)*len(params)>40:

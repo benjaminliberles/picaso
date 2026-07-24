@@ -220,7 +220,7 @@ def plot_errorbar(x, y, e, plot=None, point_kwargs={}, error_kwargs={},
         return fig
 
     elif plot_type in ['plotly', 'plotly_m']:
-        fig = go.Figure()
+        fig = plot if plot is not None else go.Figure()
         fig.add_trace(go.Scatter(
             x=x, y=y,
             error_y=dict(
@@ -232,10 +232,12 @@ def plot_errorbar(x, y, e, plot=None, point_kwargs={}, error_kwargs={},
             mode='markers',
             marker=point_kwargs
         ))
-        x_label = plot_kwargs.get('x_axis_label', plot_kwargs.get('xlabel', 'Wavelength'))
-        y_label = plot_kwargs.get('y_axis_label', plot_kwargs.get('ylabel', 'Spectrum'))
-        fig.update_xaxes(title_text=x_label)
-        fig.update_yaxes(title_text=y_label)
+        x_label = plot_kwargs.get('x_axis_label', plot_kwargs.get('xlabel', None if plot is not None else 'Wavelength'))
+        y_label = plot_kwargs.get('y_axis_label', plot_kwargs.get('ylabel', None if plot is not None else 'Spectrum'))
+        if x_label is not None:
+            fig.update_xaxes(title_text=x_label)
+        if y_label is not None:
+            fig.update_yaxes(title_text=y_label)
         height = plot_kwargs.get('height', plot_kwargs.get('plot_height', 400))
         width = plot_kwargs.get('width', plot_kwargs.get('plot_width', 600))
         fig.update_layout(height=height, width=width)
