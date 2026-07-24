@@ -283,7 +283,38 @@ def get_bands(config, retrieval_results,
               N=100,
               pressure_bands=['temperature','H2O','CO2'],
               eval_maxlogl=False):
+    """
+    Loads in configuration file and retrieval results from read_retrievals and 
+    computes model evaluations for N samples. returns all the relevant band 
+    information necessary to plot pressure and spectra interval bands. 
+
+    Parameters
+    ----------
+    config : dict
+        Loaded configuration toml file
+    retrieval_results : dict 
+        The result of read_retrieval function 
+    N : int 
+        Number of samples
+    pressure_bands : list of str
+        List of string values that determine what molecules will be plot with temperature
+    eval_maxlogl : bool 
+        Default=False, but if true in addition to getting the median profile it will also 
+        get the max loglikelihood info and return it as well 
     
+    Returns
+    -------
+    dict 
+        - all_samples_out : raw returns from check_model_samples 
+        - wavenumber : xaxis in cm-1 
+        - wavelength : xaxis in um 
+        - pressure : pressure axis in bars
+        - bands_spectra : dict with spectra bands info for median and 1sig, 2sig, and 3sig 
+        - bands_ptchem : dict with prsesure functioned bands info and 1-3 sigma 
+        - max_logl_spectra : max likelihood spectrum 
+        - max_logl_ptchem : max likelihood profile 
+        - max_logl_chisq : chi sq per data point of max likelihood profile 
+    """
     samples_equal = retrieval_results['samples_equal']
     from .driver import check_model_samples
     draws=np.random.randint(0, 
@@ -642,7 +673,7 @@ def plot_pressure_bands_deprecate(evaluations_dat,colors,ax=None):
     
 def retrieval_results(evaluations, info, filename,round=3,return_samples=True,
                      spectrum_tag='transit_depth',spectrum_unit='cm**2/cm**2',
-                    author="",contact="",model_description="",code="PICASO"):
+                    author="",contact="",model_description="",code="PICASO", **extra_attrs):
     """
     Returns all data output and creates xarray, pickle of samples, and sample plots 
     """
@@ -714,18 +745,21 @@ def retrieval_results(evaluations, info, filename,round=3,return_samples=True,
     
     max_logl_chisq = evaluations['max_logl_chisq']
 
+    attributes = dict(author=author,#required
+                      contact=contact,#required
+                      model=model_description,
+                      max_logl_chisq = max_logl_chisq,
+                      code=code, #required, in this case I used numpy to make my fake model.
+                      max_logl_params=json.dumps({ip:maxlogl[i] for i,ip in enumerate(param_names)},cls=JsonCustomEncoder),
+                      intervals_params=json.dumps({ip:strvals[ip] for i,ip in enumerate(param_names)},cls=JsonCustomEncoder),
+                      molecules = all_mols,
+                     )
+    attributes.update(extra_attrs)
+
     build_xarray = xr.Dataset(
         data_vars=data_vars,
         coords=coords,
-        attrs=dict(author=author,#required
-                   contact=contact,#required
-                   model=model_description,
-                   max_logl_chisq = max_logl_chisq,
-                   code=code, #required, in this case I used numpy to make my fake model.
-                   max_logl_params=json.dumps({ip:maxlogl[i] for i,ip in enumerate(param_names)},cls=JsonCustomEncoder),
-                   intervals_params=json.dumps({ip:strvals[ip] for i,ip in enumerate(param_names)},cls=JsonCustomEncoder),
-                   molecules = all_mols,
-                  ),
+        attrs=attributes,
     )
     #output main datafile 
     build_xarray.to_netcdf(filename+'_median_and_max_logl.nc')

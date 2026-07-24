@@ -42,6 +42,7 @@ if uploaded_file is not None:
         st.session_state.pop("fig_spec", None)
         st.session_state.pop("last_retrieval_dir", None)
         st.session_state.pop("banded_returns", None)
+        st.session_state.pop("export_zip_data", None)
     
     if retrieval_dir:
         if not os.path.exists(retrieval_dir):
@@ -85,6 +86,7 @@ if uploaded_file is not None:
                         st.session_state['fig_spec'] = fig_spec
                         st.session_state['last_retrieval_dir'] = retrieval_dir
                         st.session_state.pop("banded_returns", None)
+                        st.session_state.pop("export_zip_data", None)
                         st.rerun()
 
                 # Conditionally render results if they are in the session state
@@ -191,7 +193,8 @@ if uploaded_file is not None:
                             returns = ret.get_bands(
                                 config, info,
                                 N=N,
-                                pressure_bands=selected_pressure_bands
+                                pressure_bands=selected_pressure_bands,
+                                eval_maxlogl=True
                             )
                             st.session_state['banded_returns'] = returns
                             st.rerun()
@@ -202,3 +205,105 @@ if uploaded_file is not None:
                         st.pyplot(f_spec)
                         f_chem, a_chem = ret.plot_pressure_bands(returns)
                         st.pyplot(f_chem)
+
+                        # Export & Download Retrieval Results
+                        st.markdown("---")
+                        st.subheader("Export & Download Retrieval Results")
+                        st.write("Generate and download a package of retrieval results including the xarray dataset, sample pickle, and standard plots.")
+                        
+                        with st.expander("Configure Export Details", expanded=True):
+                            col_exp1, col_exp2 = st.columns(2)
+                            with col_exp1:
+                                spectrum_tag = st.text_input("Spectrum Tag", value="transit_depth")
+                                spectrum_unit = st.text_input("Spectrum Unit", value="cm**2/cm**2")
+                                author = st.text_input("Author", value="")
+                            with col_exp2:
+                                contact = st.text_input("Contact", value="")
+                                code_val = st.text_input("Code/Software used", value="PICASO")
+                                #N_export = st.number_input("Number of Samples to Evaluate", value=100, min_value=10, max_value=1000, step=50)
+                            
+                            model_description = st.text_area("Model Description", value="")
+                            
+                            st.markdown("##### Custom Attributes")
+                            st.write("Define any additional metadata attributes you would like to embed in the xarray NetCDF file.")
+                            
+                            if "extra_attrs" not in st.session_state:
+                                st.session_state["extra_attrs"] = pd.DataFrame([
+                                    {"Attribute Key": "", "Attribute Value": ""}
+                                ])
+                            
+                            extra_attrs_df = st.data_editor(
+                                st.session_state["extra_attrs"],
+                                num_rows="dynamic",
+                                key="extra_attrs_editor_widget"
+                            )
+                            st.session_state["extra_attrs"] = extra_attrs_df
+                    
+                        if st.button("Generate Export Package", key="generate_export_btn"):
+                            import tempfile
+                            import zipfile
+                            import io
+                            
+                            # Process custom attributes
+                            extra_attrs = {}
+                            if extra_attrs_df is not None:
+                                for _, row in extra_attrs_df.iterrows():
+                                    k = str(row.get("Attribute Key", "")).strip()
+                                    v = str(row.get("Attribute Value", "")).strip()
+                                    if k:
+                                        extra_attrs[k] = v
+                            
+                            with st.spinner("Evaluating sample bands and generating export files..."):
+                                try:
+                                    # Determine available pressure bands
+                                    avail_options = [i for i in out['profiles'][0].keys() if 'pressure' not in i]
+                                    export_pressure_bands = selected_pressure_bands if selected_pressure_bands else avail_options
+                                    
+                                    # Run get_bands with eval_maxlogl=True to ensure max logl properties are populated
+                                    evaluations = st.session_state['banded_returns']#ret.get_bands(
+                                    #    config, info,
+                                    #    N=int(N_export),
+                                    #    pressure_bands=export_pressure_bands,
+                                    #    eval_maxlogl=True
+                                    #)
+                                    
+                                    # Use a temporary directory to create files
+                                    with tempfile.TemporaryDirectory() as tmpdir:
+                                        base_filename = os.path.join(tmpdir, "retrieval_results")
+                                        
+                                        # Create files using the retrieval_results function
+                                        ret.retrieval_results(
+                                            evaluations, info, base_filename,
+                                            spectrum_tag=spectrum_tag,
+                                            spectrum_unit=spectrum_unit,
+                                            author=author,
+                                            contact=contact,
+                                            model_description=model_description,
+                                            code=code_val,
+                                            **extra_attrs
+                                        )
+                                        
+                                        # Zip everything in the temp directory
+                                        zip_buffer = io.BytesIO()
+                                        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                                            for foldername, subfolders, filenames in os.walk(tmpdir):
+                                                for f_name in filenames:
+                                                    f_path = os.path.join(foldername, f_name)
+                                                    arcname = os.path.relpath(f_path, tmpdir)
+                                                    zip_file.write(f_path, arcname)
+                                        
+                                        zip_buffer.seek(0)
+                                        st.session_state["export_zip_data"] = zip_buffer.getvalue()
+                                        st.success("Successfully generated the export package! Click the button below to download.")
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error generating export package: {e}")
+
+                        if "export_zip_data" in st.session_state:
+                            st.download_button(
+                                label="Download Export Package (.zip)",
+                                data=st.session_state["export_zip_data"],
+                                file_name="retrieval_results_export.zip",
+                                mime="application/zip",
+                                key="download_export_pkg_btn"
+                            )
