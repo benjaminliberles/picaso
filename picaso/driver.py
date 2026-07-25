@@ -358,6 +358,7 @@ def get_data(config):
     observations_config = config.get('ObservationData').copy()
     
     instruments = observations_config.pop('instruments', [])
+    convolve_observations = observations_config.pop('convolve', False)
     filenames = observations_config.get('filenames', [])
     if isinstance(filenames, str):
         filenames = [filenames]
@@ -393,7 +394,7 @@ def get_data(config):
 
         sort_indices = np.argsort(wno)
         name = os.path.splitext(os.path.basename(filename))[0]
-        resolution_dict[name] = (wno[sort_indices], ds['R'].values[sort_indices])
+        resolution_dict[name] = (wno[sort_indices], ds['R'].values[sort_indices], convolve_observations)
 
     if len(instruments)>0:
         if len(instruments) != len(data_dict.keys()):
@@ -402,7 +403,8 @@ def get_data(config):
             
             for i,name in enumerate(data_dict.keys()):
                 if ((name not in resolution_dict) & ('None' not in str(instruments[i]))):
-                    resolution_dict[name] = get_instrument_R_fits(instruments[i])
+                    wno_inst, R_inst = get_instrument_R_fits(instruments[i])
+                    resolution_dict[name] = (wno_inst, R_inst, convolve_observations)
         
     # Leaving this out for now until there is rationale 
     # to enforce mapping. For now parse_data will try and 
@@ -531,6 +533,51 @@ def hypercube(u, fitpars,param_tools=None):
             x[i]=10**x[i]  
     return x
 
+
+def _wvl_offset_to_micron(wvl_offset, obs_key, config):
+    """Convert a per-observation wavelength offset to micron.
+
+    By default retrieval.wvl_offset.<obs_key> is interpreted in micron. A TOML
+    entry can include unit = "AA", "nm", "um", etc. to sample in another unit.
+    """
+    offset_cfg = config.get('retrieval', {}).get('wvl_offset', {}).get(obs_key, {})
+    unit = offset_cfg.get('unit', 'um') if isinstance(offset_cfg, Mapping) else 'um'
+    return wvl_offset * u.Unit(unit).to(u.um)
+
+
+def apply_wavelength_offset_to_model(y_model, xdata, wvl_offset_micron):
+    """Shift model features in wavelength and return values on the original data grid.
+
+    Parameters
+    ----------
+    y_model : array_like
+        Model flux already sampled on the observation grid.
+    xdata : array_like
+        Observation grid in wavenumber (cm^-1), matching DATA_DICT.
+    wvl_offset_micron : float
+        Additive model wavelength offset in micron. Positive values move model
+        features to longer wavelengths. The returned array remains on xdata.
+    """
+    if wvl_offset_micron == 0 or wvl_offset_micron is None:
+        return np.asarray(y_model, dtype=float).copy()
+
+    y_model = np.asarray(y_model, dtype=float)
+    wave_um = 1e4 / np.asarray(xdata, dtype=float)
+    order = np.argsort(wave_um)
+    shifted_wave = wave_um[order] + wvl_offset_micron
+    shifted_model = y_model[order]
+
+    shifted = np.interp(
+        wave_um[order],
+        shifted_wave,
+        shifted_model,
+        left=np.nan,
+        right=np.nan,
+    )
+    out = np.empty_like(y_model, dtype=float)
+    out[order] = shifted
+    return out
+
 def _velocity_config(config, key):
     value = config.get('object', {}).get(key, None)
     if value is None:
@@ -616,12 +663,22 @@ def process_model(resultx, resulty, data_dict=None, conv_dict=None, config=None,
                 rebinned = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), 1e4/xdata)
             elif jwst_instrument_conv_from_file:
                 # Note: this was noted as not fully tested in MODEL
-                wno_inst, R_conv = jwst_instrument_conv_from_file
+                if len(jwst_instrument_conv_from_file) == 3:
+                    wno_inst, R_conv, convolve_observation = jwst_instrument_conv_from_file
+                else:
+                    wno_inst, R_conv = jwst_instrument_conv_from_file
+                    convolve_observation = True
                 if len(wno_inst) == len(xdata) and np.allclose(wno_inst, xdata, rtol=1e-8, atol=0.0):
-                    rebinned = convolve_top_hat_rebin_R(1e4/resultx, resulty, 1e4/xdata, np.asarray(R_conv))
+                    if convolve_observation:
+                        rebinned = convolve_top_hat_rebin_R(1e4/resultx, resulty, 1e4/xdata, np.asarray(R_conv))
+                    else:
+                        rebinned = top_hat_rebin_R(1e4/resultx, resulty, 1e4/xdata, np.asarray(R_conv))
                 else:
                     # raise Exception('This is not fully tested... Need to enable this before proceeding')
-                    rebinned_to_inst = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), 1e4/wno_inst)
+                    if convolve_observation:
+                        rebinned_to_inst = conv_non_uniform_R(resulty, 1e4/resultx, np.asarray(R_conv), 1e4/wno_inst)
+                    else:
+                        rebinned_to_inst = top_hat_rebin_R(1e4/resultx, resulty, 1e4/wno_inst, np.asarray(R_conv))
                     rebinned = spectres.spectres(xdata,wno_inst, rebinned_to_inst)
             else:
                 rebinned = spectres.spectres(xdata,resultx, resulty)
@@ -694,7 +751,7 @@ def MODEL(cube, fitpars, config, OPA, param_tools, DATA_DICT, retrieval=True,CON
         # update parameters
         # change to use function with checker that logs everything being changed 
         # this will raise except if the changed parameters does not match len fitpars
-        # this only ignores scaling, offset, and err_inf which are handled in loglikelihood function
+        # this only ignores scaling, offset, err_inf, and wvl_offset which are handled in loglikelihood function
         config=update_config_w_cube(config, fitpars,row)
 
         # compute spectrum
@@ -769,6 +826,7 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
     offset_dict = config.get('retrieval',{}).get('offset',{})
     err_inf_dict = config.get('retrieval',{}).get('err_inf',{})
     scaling_dict = config.get('retrieval',{}).get('scaling',{})
+    wvl_offset_dict = config.get('retrieval',{}).get('wvl_offset',{})
 
     logls = []
 
@@ -806,6 +864,15 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
                 icube = list(fitpars.keys()).index(f'scaling.{key}')
                 y_model *= cube[j, icube];added_extras+=1
 
+            # add wavelength offsets. This shifts the model wavelength coordinate,
+            # then interpolates back to the unchanged observation grid.
+            if key in wvl_offset_dict:
+                icube = list(fitpars.keys()).index(f'wvl_offset.{key}')
+                wvl_offset = _wvl_offset_to_micron(cube[j, icube], key, config)
+                y_model = apply_wavelength_offset_to_model(y_model, xdata, wvl_offset)
+                y_mask = y_mask | np.isnan(y_model)
+                added_extras += 1
+
             # add error inflation if exists
             if key in err_inf_dict:
                 icube = list(fitpars.keys()).index(f'err_inf.{key}')
@@ -826,8 +893,8 @@ def log_likelihood(cube, fitpars, config, OPA, DATA_DICT, param_tools,CONV_DICT=
                 xdat_all.append(xdata)
 
         # check added vals after going through all data instnaces 
-        should_add_extras = len(offset_dict)+len(scaling_dict)+len(err_inf_dict)
-        assert should_add_extras == added_extras, 'The number of added offsets, scalings or error inflations does not match occurances in config file'
+        should_add_extras = len(offset_dict)+len(scaling_dict)+len(err_inf_dict)+len(wvl_offset_dict)
+        assert should_add_extras == added_extras, 'The number of added offsets, scalings, wavelength offsets or error inflations does not match occurances in config file'
 
 
         ydat_all = np.concatenate(ydat_all)
@@ -1595,7 +1662,7 @@ def update_config_w_cube(config_og, fitpars, cube):
     """
     log_change = [False]*len(fitpars)
     for i, key in enumerate(fitpars.keys()):
-        if not (key.startswith("offset") or key.startswith("scaling") or key.startswith("err_inf")):
+        if not (key.startswith("offset") or key.startswith("scaling") or key.startswith("err_inf") or key.startswith("wvl_offset")):
             log_change[i]=set_dict_value(config_og, key, cube[i])
         else:  
             log_change[i]=True#no need to change config
