@@ -420,11 +420,11 @@ def get_kzz(grav,tidal,flux_net_ir_layer, flux_plus_ir_attop,Adiabat,nstr, Atmos
 #     convergence.
     f_target = abs(tidal[0])
     f_actual = chf[nz-1]
-    
-    ratio = f_target/f_actual
-    for iz in range(nz-1,-1,-1):
-        
-        chf[iz] = max(chf[iz]*ratio,flx_min) 
+
+    if f_target > 0 and f_actual > 0:
+        ratio = f_target / f_actual
+        for iz in range(nz-1,-1,-1):
+            chf[iz] = max(chf[iz]*ratio, flx_min)
 
     lapse_ratio = np.zeros_like(t_layer)
     for j in range(len(pressure)-1):
@@ -1130,7 +1130,7 @@ def newton_raphson_solver(temp, nstr, nofczns, convergence_criteria,
         f = 0.5 * sum_f2
         
         # Test if we are already at a root
-        if (test / abs(tidal[0])) < 0.01 * tolf:
+        if abs(tidal[0]) > 0 and (test / abs(tidal[0])) < 0.01 * tolf:
             if verbose: print(" We are already at a root, tolf , test = ", 0.01 * tolf, ", ", test / abs(tidal[0]))
             dtdp = np.zeros(shape=(nlevel - 1))
             for j in range(nlevel - 1):
@@ -1274,7 +1274,9 @@ def newton_raphson_solver(temp, nstr, nofczns, convergence_criteria,
                 temp = temp_old.copy() + 0.5
                 if verbose: print("Got stuck with temp NaN -- so escaping the while loop in tstart")
 
-        if verbose: print("Iteration number ", its, ", min , max temp ", min(temp), max(temp), ", flux balance ", (rfaci*flux_results[5][0] + rfacv*flux_results[1][0,0,0] + tidal[0]) / abs(tidal[0]))
+        if verbose:
+            _tidal_norm = abs(tidal[0]) if abs(tidal[0]) > 0 else 1.0
+            print("Iteration number ", its, ", min , max temp ", min(temp), max(temp), ", flux balance ", (rfaci*flux_results[5][0] + rfacv*flux_results[1][0,0,0] + tidal[0]) / _tidal_norm)
 
         if save_profile == 1:
             all_profiles = np.append(all_profiles, temp_old)
