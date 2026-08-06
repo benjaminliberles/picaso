@@ -1469,11 +1469,10 @@ def render_download_config(retrieval_object):
     st.code("""
 # runs retrieval
 import picaso.driver as d
-d.retrieve(current_config_filename)
+d.retrieve(driver_file="configured_toml.toml")
 
 # recreates the spectrum
-import picaso.driver as d
-d.go(current_config_filename)""")
+d.run(driver_file="configured_toml.toml")""")
     st.download_button(
         label="Download current config",
         data=toml.dumps(cleaned_config),
