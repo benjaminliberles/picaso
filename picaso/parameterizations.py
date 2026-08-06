@@ -202,6 +202,23 @@ class Parameterize(GridFitter):
         pandas.DataFrame 
             PICASO formatted cld input dataframe 
         """
+
+        lognorm_kwargs = lognorm_kwargs.copy()
+        hansen_kwargs = hansen_kwargs.copy()
+
+        if "lognorm" in distribution:
+            if "lograd" in lognorm_kwargs and np.isfinite(lognorm_kwargs["lograd"]):
+                # Brewster log10(radius / um) -> PICASO log10(radius / cm)
+                lognorm_kwargs["lograd"] -= 4.0
+
+            if "sigma" in lognorm_kwargs and np.isfinite(lognorm_kwargs["sigma"]):
+                # Brewster width parameter -> sigma in log10(radius)
+                lognorm_kwargs["sigma"] = np.log10(1.0 + 4.0 * lognorm_kwargs["sigma"])
+
+        elif "hansen" in distribution:
+            if "lograd" in hansen_kwargs and np.isfinite(hansen_kwargs["lograd"]):
+                # Brewster log10(radius / um) -> PICASO log10(radius / cm)
+                hansen_kwargs["lograd"] -= 4.0
         
         dist = self.get_particle_dist(condensate,distribution,lognorm_kwargs,hansen_kwargs)
             
@@ -209,9 +226,25 @@ class Parameterize(GridFitter):
                                                               dist, self.qext[condensate], self.qscat[condensate], self.cos_qscat[condensate])
         
         if decay_type == 'slab':
+            slab_kwargs = slab_kwargs.copy()
+            slab_kwargs["ptop"] = slab_kwargs["ptop"] - slab_kwargs.get("dp", 0.005)
             opd_profile = self.slab_decay(**slab_kwargs)
         elif decay_type == 'deck':
             opd_profile = self.deck_decay(**deck_kwargs)
+
+        reference_wave = 1.0  # micron, Brewster convention
+
+        wavelength = 1e4 / np.asarray(wavenumber_grid, dtype=float)
+        opd = np.asarray(opd, dtype=float)
+
+        order = np.argsort(wavelength)
+        opd_ref = np.interp(reference_wave, wavelength[order], opd[order])
+
+        if not np.isfinite(opd_ref) or opd_ref <= 0:
+            raise ValueError("Could not normalize Brewster Mie cloud opacity at 1 micron.")
+
+        opd_max = np.nanmax(opd)
+        opd_profile = opd_profile * (opd_max / opd_ref)
         
         df = picaso_format(opd, w0, g0, wavenumber_grid, self.pressure_layer, opd_profile=opd_profile)
         return df.astype(float)
@@ -241,11 +274,13 @@ class Parameterize(GridFitter):
         wavelength= 1e4/wavenumber_grid
 
         if decay_type == 'slab':
+            slab_kwargs = slab_kwargs.copy()
+            slab_kwargs["ptop"] = slab_kwargs["ptop"] - slab_kwargs.get("dp", 0.005)
             opd_profile = self.slab_decay(**slab_kwargs)
         elif decay_type == 'deck':
             opd_profile = self.deck_decay(**deck_kwargs)
 
-        wave_dependent_opd =  np.concatenate([opd_profile[i]*(wavelength/reference_wave)**(-alpha) for i in range(self.nlayer)])
+        wave_dependent_opd =  np.concatenate([opd_profile[i]*(wavelength/reference_wave)**(alpha) for i in range(self.nlayer)])
         wvnos =  np.concatenate([wavenumber_grid for i in range(self.nlayer)])
         pressures =  np.concatenate([[self.pressure_layer[i]]*len(wavelength) for i in range(self.nlayer)])
         w0=wave_dependent_opd*0+ssa
