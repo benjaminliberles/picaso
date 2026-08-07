@@ -5127,7 +5127,7 @@ class inputs():
         moistgrad: bool
             Moist adiabatic gradient option
         """
-        if self.inputs['planet']['T_eff'] == 0.0:
+        if self.inputs['planet']['T_eff'] == 0.0 and self.inputs['climate']['adiabat'] == 'H-H2-He':
             raise Exception('Need to specify Teff with jdi.input for climate run')
         if self.inputs['planet']['gravity'] == 0.0:
             raise Exception('Need to specify gravity with jdi.input for climate run')
