@@ -1,5 +1,5 @@
 from .atmsetup import ATMSETUP, convert_to_simple, normalize_exclude_mol
-from .fluxes import get_reflected_3d , get_thermal_1d, get_thermal_3d, get_reflected_SH, get_thermal_SH,get_transit_1d, tidal_flux
+from .fluxes import get_reflected_3d , get_thermal_1d, get_thermal_3d, get_reflected_SH, get_thermal_SH,get_transit_1d, tidal_flux, blackbody_extend
 from .fluxes_noalloc import get_reflected_1d
 
 from .climate import  namedtuple,run_chemeq_climate_workflow,run_diseq_climate_workflow
@@ -12,7 +12,7 @@ from .build_3d_input import regrid_xarray
 
 
 from virga import justdoit as vj
-from scipy.interpolate import UnivariateSpline, interp1d,RegularGridInterpolator
+from scipy.interpolate import UnivariateSpline, interp1d, RegularGridInterpolator
 from scipy import special
 from numpy import exp, sqrt,log
 from numba import jit,njit
@@ -1507,7 +1507,7 @@ def _bin_stellar_flux(wno_star, flux_star, wno_planet, delta_wno):
     wno_star : array
         Wavenumber grid of the stellar spectrum (cm^-1), filtered to positive values.
     flux_star : array
-        Stellar flux at wno_star (erg/cm^2/s/cm^-1).
+        Stellar flux at wno_star (erg cm^-2 s^-1 cm^-1).
     wno_planet : array
         K-table bin center wavenumbers (cm^-1).
     delta_wno : array
@@ -1516,22 +1516,24 @@ def _bin_stellar_flux(wno_star, flux_star, wno_planet, delta_wno):
     Returns
     -------
     bin_flux : ndarray
-        Integrated flux per bin (erg/cm^2/s).
+        Integrated flux per bin (erg cm^-2 s^-1).
     """
-    interpolator = interp1d(np.log10(wno_star), np.log10(flux_star), kind='linear',
-                            fill_value='extrapolate', bounds_error=False)
+    
     half_dw = delta_wno / 2.0
     bin_flux = np.zeros(len(wno_planet))
     for i in range(len(wno_planet)):
+        # Set up wavenumbers of bin with sampling high resolution stellar spectrum
         wno_lo = wno_planet[i] - half_dw[i]
         wno_hi = wno_planet[i] + half_dw[i]
         in_bin = (wno_star >= wno_lo) & (wno_star <= wno_hi)
-        wno_sub = np.concatenate([[wno_lo], wno_star[in_bin], [wno_hi]])
-        flux_sub = 10**interpolator(np.log10(wno_sub))
+        wno_bin = wno_star[in_bin]
+
+        # Compute binned flux using trapezoidal integration
         try:
-            bin_flux[i] = np.trapezoid(flux_sub, x=-1/wno_sub)
+            bin_flux[i] = np.trapezoid(flux_star[in_bin], x=-1/wno_bin)
         except AttributeError:
-            bin_flux[i] = np.trapz(flux_sub, x=-1/wno_sub)
+            bin_flux[i] = np.trapz(flux_star[in_bin], x=-1/wno_bin)
+    
     return bin_flux
 
 
@@ -1854,6 +1856,7 @@ class inputs():
         # load in adiabat file
         if adiabat=='didier' or adiabat=='H-H2-He':
             cp_grad = json.load(open(os.path.join(__refdata__,'climate_INPUTS','specific_heat_p_adiabat_grad.json')))
+            adiabat = 'H-H2-He'
         elif adiabat=='co2' or adiabat=='CO2':
             cp_grad = json.load(open(os.path.join(__refdata__,'climate_INPUTS','adiabat_grad_co2.json')))
         elif adiabat=='n2' or adiabat=='N2':
@@ -1863,13 +1866,15 @@ class inputs():
         else:
             raise Exception('You have selected an adiabatic gradient composition that PICASO does not recognize. Please change or remove your specified adiabat in jdi.inputs(). Acceptable adiabat choices are: \'H-H2-He\', \'CO2\', \'N2\', \'O2\'. Not specifying the adiabat will default to the legacy H-H2-He adiabat.')
 
+        #adiabat
+        self.inputs['climate']['adiabat'] = adiabat
         #log10 base temperature Kelvin 
         self.inputs['climate']['t_table'] = np.array(cp_grad['temperature'])
         #log10 base pressure bars 
         self.inputs['climate']['p_table'] = np.array(cp_grad['pressure'])
         #\nabla_ad = d ln T/ d ln P |_S (at constant entropy)
         self.inputs['climate']['grad'] = np.array(cp_grad['adiabat_grad'])
-        #log Cp (erg/g/K);Specific heat at constant pressure for the same H/He 
+        #log Cp (erg/g/K);Specific heat at constant pressure
         self.inputs['climate']['cp'] = np.array(cp_grad['specific_heat'])
 
 
@@ -1966,6 +1971,11 @@ class inputs():
 
         wno_planet = opannection.wno
 
+        # check if we need to extend stellar spectrum to get on planet wno grid
+        if wno_planet[0] < wno_star[0] or wno_planet[-1] > wno_star[-1]:
+            # extend stellar spectrum with a blackbody
+            wno_star, flux_star = blackbody_extend(temp, wno_star, wno_planet, flux_star)
+
         #this adds stellar shifts 'self.raman_stellar_shifts' to the opacity class
         #the cross sections are computed later 
         if self.inputs['approx']['rt_params']['common']['raman'] == 0: 
@@ -1982,11 +1992,7 @@ class inputs():
             if not ((not np.isnan(semi_major)) & (not np.isnan(r))): 
                 raise Exception ('semi_major and r parameters are not provided but are needed to compute relative fluxes for climate calculation or when get_lvl_flux are being requested')
 
-            # Ensure valid values for interpolation
-            mask_valid = flux_star > 1e-30  
-            if not np.all(mask_valid):
-                wno_star, flux_star = wno_star[mask_valid], flux_star[mask_valid]
-
+            # Compute binned flux using trapzezoidal integration
             delta_wno = getattr(opannection, 'delta_wno',
                                 np.append(np.diff(wno_planet), np.diff(wno_planet)[-1]))
             fine_flux_star = _bin_stellar_flux(wno_star, flux_star, wno_planet, delta_wno)
@@ -1998,7 +2004,6 @@ class inputs():
                 non_zero_indices = np.where(~mask)[0]
                 fine_flux_star[mask] = np.interp(wno_planet[mask], wno_planet[non_zero_indices], fine_flux_star[non_zero_indices])
             
-
             opannection.unshifted_stellar_spec = fine_flux_star  
             bin_flux_star = fine_flux_star          
             unit_flux =  'ergs cm^{-2} s^{-1}'

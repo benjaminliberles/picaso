@@ -1660,6 +1660,28 @@ def blackbody_integrated(T, wave, dwave):
 @jit(nopython=True, cache=True)
 def blackbody(t,w):
     """
+    Blackbody intensity in cgs units in per unit wavelength (cm)
+
+    Parameters
+    ----------
+    t : array,float
+        Temperature (K)
+    w : array, float
+        Wavelength (cm)
+    
+    Returns
+    -------
+    ndarray with shape ntemp x numwave in units of erg/cm/s2/cm
+    """
+    h = 6.62607004e-27 # erg s 
+    c = 2.99792458e+10 # cm/s
+    k = 1.38064852e-16 #erg / K
+
+    return ((2.0*h*c**2.0)/(w**5.0))*(1.0/(exp((h*c)/outer(t, w*k)) - 1.0))
+
+@jit(nopython=True, cache=True)
+def blackbody_flux(t,w):
+    """
     Blackbody flux in cgs units in per unit wavelength (cm)
 
     Parameters
@@ -1677,7 +1699,64 @@ def blackbody(t,w):
     c = 2.99792458e+10 # cm/s
     k = 1.38064852e-16 #erg / K
 
-    return ((2.0*h*c**2.0)/(w**5.0))*(1.0/(exp((h*c)/outer(t, w*k)) - 1.0)) #* (w*w)
+    return ((2.0*np.pi*h*c**2.0)/(w**5.0))*(1.0/(exp((h*c)/outer(t, w*k)) - 1.0))
+
+def blackbody_extend(T, wno_star, wno_planet, flux_star):
+    """
+    Extends spectrum with a blackbody
+
+    Parameters
+    ----------
+    T : float
+        Temperature [K]
+    wno_star : arr
+        Wavenumber [cm^-1]
+    wno_planet : arr
+        Wavenumber [cm^-1]
+    flux_star : arr
+        Flux corresponding to wno grid [erg*cm^(-3)*s^(-1)]
+
+    Returns
+    -------
+    extended_wno_star : arr
+        Extended wno grid [cm^-1]
+    extended_flux_star : arr
+        Extended flux array [erg*cm^(-3)*s^(-1)]
+    """
+
+    # figure out if we have to extend short wnos, long wnos, or both
+    double_extend = False # flag to extend in both directions
+    if wno_planet[0] < wno_star[0]: 
+        # set up possibilty of double extend
+        double_extend = True
+
+        # extend short wnos
+        additional_wno_short = np.linspace(wno_planet[0], wno_star[0], 1000, endpoint=True)
+
+        # calculate fluxes of a blackbody of temperature T
+        flux_bb_short = blackbody_flux(T, 1/additional_wno_short)
+        
+        # append flux_star with blackbody
+        extended_wno_star = np.concatenate((additional_wno_short, wno_star))
+        extended_flux_star = np.concatenate((flux_bb_short.squeeze(), flux_star))
+    if wno_planet[-1] > wno_star[-1]: 
+         # extend long wnos        
+        additional_wno_long = np.linspace(wno_star[-1], wno_planet[-1], 1000, endpoint=True)
+
+        # calculate fluxes of a blackbody of temperature T
+        flux_bb_long = blackbody_flux(T, 1/additional_wno_long)
+
+        # pick which array to append based on if extending only long wnos or both
+        if double_extend:
+            # append extended flux
+            extended_wno_star = np.concatenate((extended_wno_star, additional_wno_long))
+            extended_flux_star = np.concatenate((extended_flux_star, flux_bb_long.squeeze()))
+        else:
+            # append flux
+            extended_wno_star = np.concatenate((wno_star, additional_wno_long))
+            extended_flux_star = np.concatenate((flux_star, flux_bb_long.squeeze()))
+
+    return extended_wno_star, extended_flux_star
 
 @jit(nopython=True, cache=True)
 def get_thermal_1d(nlevel, wno,nwno, numg,numt,tlevel, dtau, w0,cosb,plevel, ubar1,
