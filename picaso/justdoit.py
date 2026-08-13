@@ -790,7 +790,7 @@ def output_xarray(df, picaso_class, add_output={}, savefile=None):
     ----
     - figure out why pandas index are being returned for pressure and wavelenth 
     - fix clouds wavenumber_layer which doesnt seem like it would work 
-    - add clima inputs : teff (or tint), number of convective zones
+    - add clima inputs : teff, number of convective zones
     - cvs_locs array should be more clear
     """ 
     attrs = {}
@@ -3578,7 +3578,7 @@ class inputs():
         kv1, kv2 =10.**(logg1+logKir),10.**(logg1+logKir)
         kth=10.**logKir
 
-        Teff = T_int
+        Teff = (Teq**4 + T_int**4)**(1/4)
         f = 1.0  # solar re-radiation factor
         A = 0.0  # planetary albedo
         g0 = self.inputs['planet']['gravity']/100.0 #cm/s2 to m/s2
@@ -5133,31 +5133,84 @@ class inputs():
         return picaso(self, opacityclass,dimension=dimension,calculation=calculation,
             full_output=full_output, plot_opacity=plot_opacity, as_dict=as_dict)
 
-    def effective_temp(self, teff=None):
+    def effective_temp(self, Teq=None, Tint=None, Teff=None):
         """Same as T_eff with different notation
-
-
-        Parameters
-        ----------
-        teff : float 
-            (Optional) Effective temperature of Planet
-        """
-        return self.T_eff(teff)
-
-    def T_eff(self, Teff=None):
-        """
-        Get Teff for climate run 
+        Get Teff for climate run. Takes in Teff directly
+        or will calculate from Teq and Tint
 
         Parameters
         ----------
-        T_eff : float 
-            (Optional) Effective temperature of Planet
+        Teq : float 
+            (Optional) Equilibrium temperature [K]
+        Tint : float 
+            (Optional) Internal temperature [K]
+        Teff : float 
+            (Optional) Effective temperature [K]
+        """
+
+        # check if we need to calculate Teff
+        if Teff is None:
+            try:
+                Teff = (Teq**4 + Tint**4)**(1/4)
+            except:
+                if Teq is None and Tint is None:
+                    raise Exception('Teff, Teq, and Tint are not specified. ' \
+                    'Please supply Teff, or Teq and Tint. ' \
+                    'Both Teq and Tint are needed to calculate Teff.')
+                if Teq is None:
+                    raise Exception('Teq is not specified. Both Teq and Tint are needed to calculate Teff.')
+                if Tint is None:
+                    raise Exception('Tint is not specified. Both Teq and Tint are needed to calculate Teff.')
+
+        return self.T_eff(Teff=Teff, Teq=Teq, Tint=Tint)
+
+    def T_eff(self, Teq=None, Tint=None, Teff=None):
+        """
+        Get Teff for climate run. Takes in Teff directly
+        or will calculate from Teq and Tint
         
+        Parameters
+        ----------
+        Teq : float 
+            (Optional) Equilibrium temperature [K]
+        Tint : float 
+            (Optional) Internal temperature [K]
+        Teff : float 
+            (Optional) Effective temperature [K]
         """
+
+        # effective temperature
         if Teff is not None:
             self.inputs['planet']['T_eff'] = Teff
-        else :
+        else:
+            try:
+                Teff = (Teq**4 + Tint**4)**(1/4)
+            except:
+                if Teq is None and Tint is None:
+                    raise Exception('Teff, Teq, and Tint are not specified. ' \
+                    'Please supply Teff, or Teq and Tint. ' \
+                    'Both Teq and Tint are needed to calculate Teff.')
+                if Teq is None:
+                    raise Exception('Teq is not specified. Both Teq and Tint are needed to calculate Teff.')
+                if Tint is None:
+                    raise Exception('Tint is not specified. Both Teq and Tint are needed to calculate Teff.')
             self.inputs['planet']['T_eff'] = 0
+
+        # equilibrium temperature
+        if Teq is not None:
+            self.inputs['planet']['T_eq'] = Teq
+        else:
+            print('WARNING: Equilibrium temperature is not specified, assuming Teq=0. ' \
+            'Please add Teq with justdoit.effective_temp() if a non-zero value is desired.')
+            self.inputs['planet']['T_eq'] = 0
+
+        # internal temperature
+        if Tint is not None:
+            self.inputs['planet']['T_int'] = Tint
+        else:
+            print('WARNING: Internal temperature is not specified, assuming Tint=0. ' \
+            'Please add Tint with justdoit.effective_temp() if a non-zero value is desired.')
+            self.inputs['planet']['T_int'] = 0
     
     def interpret_run(self):
         print('SUMMARY')
@@ -5205,7 +5258,7 @@ class inputs():
         moistgrad: bool
             Moist adiabatic gradient option
         """
-        if self.inputs['planet']['T_eff'] == 0.0 and self.inputs['climate']['adiabat'] == 'H-H2-He':
+        if self.inputs['planet']['T_eff'] == 0.0:
             raise Exception('Need to specify Teff with jdi.input for climate run')
         if self.inputs['planet']['gravity'] == 0.0:
             raise Exception('Need to specify gravity with jdi.input for climate run')
@@ -5427,6 +5480,7 @@ class inputs():
         InjectionBundle = InjectionBundle(inject_energy, inject_beam, wave_in, pm, hratio, beam_profile)
 
 
+        Tint = self.inputs['planet']['T_int']
         grav = 0.01*self.inputs['planet']['gravity'] # cgs to si
         #logmh = self.inputs['atmosphere'].get('mh',None)
         #logmh = float(logmh) if logmh is not None else 0
@@ -5435,14 +5489,12 @@ class inputs():
         
         col_den = 1e6*(pressure[1:] -pressure[:-1] ) / (grav/0.01) # cgs g/cm^2
         nlevel = len(pressure)
-        tidal = tidal_flux(Teff, nlevel, pressure, col_den, InjectionBundle)
+        tidal = tidal_flux(Tint, nlevel, pressure, col_den, InjectionBundle)
         if inject_energy: 
             if verbose: 
                 print("Tidal Injection is Turned on. This is your new energy profile. Pressure, tidal (erg/cm3)/s:")
                 for i in range(nlevel):
                     print(pressure[i],tidal[i])
-        # old tidal flux calculation without energy injection function
-        # tidal = np.zeros_like(pressure) - sigma_sb *(Teff**4)
 
         # cloud inputs
         cloudy = self.inputs['climate'].get('cloudy',False)
@@ -5547,6 +5599,7 @@ class inputs():
         all_out['ptchem_df'] = chem_out
         all_out['dtdp'] = dtdp
         all_out['cvz_locs'] = nstr_new
+        all_out['adiabat'] = self.inputs['climate']['adiabat']
         all_out['flux_ir_attop']=flux_plus_final
         flux_net_final = rfacv * flux_net_v_final + rfaci* flux_net_ir_final + tidal
         all_out['fnet/fnetir']=flux_net_final/flux_net_ir_final

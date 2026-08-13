@@ -3747,30 +3747,22 @@ def vec_dot(A,B):
     return C
 
 
-def tidal_flux(T_e, nlevel, pressure, col_den, InjectionBundle):
+def tidal_flux(Tint, nlevel, pressure, col_den, InjectionBundle):
     """
     Computes Tidal Fluxes in all levels. Py of TIDALWAVE subroutine. 
 	
     Parameters
 	----------
-	T_e : float 
-		Temperature (internal?)
-	wave_in : float
-		what is this?
+	Tint : float 
+		Internal temperature [K]
 	nlevel : int 
 		# of levels
 	pressure : array 
 		pressure array 
-	pm : float
-		Some pressure (?)
-    hratio : float
-		Ratio of Scale Height over Chapman Scale Height
     col_den : array
         Column density array
-    inject_beam : bool
-        If True, inject an energy beam into the model
-    beam_profile : array
-        Beam profile to inject into the model. If None, no beam is injected.
+    InjectionBundle : namedtuple
+        Collection of energy injection inputs
     Returns
 	-------
 	Tidal Fluxes and DE/DM in ergs/g sec
@@ -3779,7 +3771,7 @@ def tidal_flux(T_e, nlevel, pressure, col_den, InjectionBundle):
 
     sigma_sb = 0.56687e-4 # stefan-boltzmann constant
 
-    tide = -sigma_sb* (T_e**4)
+    tide = -sigma_sb* (Tint**4)
 
     T_tot= 0.0 #TTOT
 
