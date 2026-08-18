@@ -1403,6 +1403,9 @@ def render_retrievals(spectrum_figure=None):
     retrieval_object['sampler']['run_kwargs'] = eval(
         st.text_input("Enter run_kwargs as parsable dictionary e.g., {'max_iter' : 10000}.", 
                       value=str(retrieval_object['sampler'].get('run_kwargs',{}))))
+
+    config['InputOutput']['retrieval_output'] =st.text_input("Enter retrieval run output path", 
+                          value='')
     
     
     st.divider()

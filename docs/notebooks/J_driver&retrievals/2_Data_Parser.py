@@ -41,7 +41,3 @@ flux_unit = 'erg*cm^(-2)*s^(-1)*Hz^(-1)'
 out = go.parse_data('test_ascii.csv', 'x', 'flux',
                     'flux_error', coord_unit = 'cm^(-1)', data_unit = flux_unit)
 # returns a dictionary with ordered wavenumber, flux (in picaso units or erg/cm3/s), error
-
-# %%
-
-# %%

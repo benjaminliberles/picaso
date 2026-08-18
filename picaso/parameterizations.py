@@ -189,12 +189,12 @@ class Parameterize(GridFitter):
             either lognormal or hansen 
         lognorm_kwargs : dict 
             diectionary with the format: {'sigma':np.nan, 'lograd':np.nan}
-            lograd median particle radius in cm 
+            lograd median particle radius in um 
             sigma width of the distribtuion must be >1 
         hansen_kwargs : dict 
             dictionary with the format: {'b':np.nan,'lograd':np.nan}
             lograd and b from Hansen+1971: https://web.gps.caltech.edu/~vijay/Papers/Polarisation/hansen-71b.pdf
-            lograd = a = effective particle radius 
+            lograd = a = effective particle radius in um
             b = varience of the particle radius 
 
         Returns 

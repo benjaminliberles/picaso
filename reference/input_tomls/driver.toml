@@ -246,20 +246,15 @@ patch1 = 'clear'
 patch2 = 'cloud1'
 frac_1 = 0.3 #this is the fraction assigned to patch 1
 
-#[doppler_shift]
-#doppler_v = 0.0 # Doppler velocities in km/s for each spectrum.
-#edgeHandling = 'firstlast' #can we force these to be defaults and not include them in the toml? How often will we actually change this
-#edgeHandling_options = ['firstlast' , 'fillValue']
-#fillValue = 'None'
-
-#[rotational_broadening]
-#rotational_v = 0.0 # Projected rotational velocities (km/s)
-#eps = 0.6 #linb darkening coefficient 
-#nr = 10 #number of radial bins 
-#ntheta = 100 # azimuthal bins in outer annulus 
-#dif = 0 # differential rotation coefficient 
 
 [retrieval]
+mpi = true # set to true if parallelizing 
+processes = 10 # used for Pool in dynesty. default is to use cpu_count()/2
+
+# below we incldue some examples of how to specify which parameters to retrieve
+# to specify that a given parameter is a free parametr you specify the dictionary path 
+# e.g., planet radius is  located at object.radius so we need a retrieval block for 
+# retrieval.object.radius
 
 [retrieval.object.radius]
 prior="uniform"
@@ -293,20 +288,25 @@ min=0.005
 max=2
 log=true
 
+# in addition to physical parameters you might also want to retrieve on 
+# error inflation, error scaling, offsets, or wavelength offsets. 
+# below we show examples for how to add those. Note, that each requires 
+# the parameter to be associated with the filename of your data (not the full path and WITHOUT the extension)
+
 [retrieval.err_inf]
-[retrieval.err_inf.filename_example] #errinf terms are recognized by the associated filename. e.g., filename filename_example.csv would be entered here as example
+[retrieval.err_inf.filename_example] #errinf terms are recognized by the associated filename. e.g., filename filename_example.csv would be entered here as filename_example
 prior="uniform"
 uniform_kwargs={min=0.005, max=2}
 log=true
 
 [retrieval.scaling]
-[retrieval.scaling.filename_example] #scaling terms are recognized by the associated filename. e.g., filename filename_example.csv would be entered here as example
+[retrieval.scaling.filename_example] #scaling terms are recognized by the associated filename. e.g., filename filename_example.csv would be entered here as filename_example
 prior="uniform"
 uniform_kwargs={min=0.005, max=2}
 log=true
 
 [retrieval.offset]
-[retrieval.offset.filename_example] #offsets terms are recognized by the associated filename. e.g., filename filename_example.csv would be entered here as example
+[retrieval.offset.filename_example] #offsets terms are recognized by the associated filename. e.g., filename filename_example.csv would be entered here as filename_example
 prior="uniform"
 uniform_kwargs={min=-1, max=1}
 log=false
@@ -324,3 +324,4 @@ code_options=['dynesty','ultranest']#should eventually be ultranest, emcee, pymu
 sampler_kwargs={live_points = 700}#currently for NestedSampler in dynesty
 resume=false
 run_kwargs={}#currently for run_nested in dynesty
+
