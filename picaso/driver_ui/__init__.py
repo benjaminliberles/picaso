@@ -5,7 +5,7 @@ import subprocess
 
 def main():
     """Launch the PICASO Streamlit driver UI app."""
-    script_path = os.path.join(os.path.dirname(__file__), "Run_PICASO.py")
+    script_path = os.path.join(os.path.dirname(__file__), "Home.py")
     cmd = [sys.executable, "-m", "streamlit", "run", script_path] + sys.argv[1:]
     subprocess.run(cmd)
 
