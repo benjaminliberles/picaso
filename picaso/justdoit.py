@@ -5334,7 +5334,7 @@ class inputs():
     
     def climate(self, opacityclass, save_all_profiles = False, with_spec=False,
         save_all_kzz = False, diseq_chem = False, self_consistent_kzz = True,
-        verbose=True, damping=False):#,
+        damping = False, verbose=True):#,
         #chemeq_first=True
        #deprecate: on_fly=False,gases_fly=None, as_dict=True, kz = None, 
         """
@@ -5360,14 +5360,14 @@ class inputs():
             If you want to run `on-the-fly' mixing (takes longer),True/False
         self_consistent_kzz : bool
             If you want to run MLT in convective zones and Moses in the radiative zones
+        damping : bool
+                    (Optional) Only used when diseq_chem=True. If True, under-relax the
+                    temperature update in the coupled temperature<->photochem iteration
+                    (blend the new iterate 50/50 with the previous one). This damps
+                    period-2 limit cycles that can otherwise prevent convergence. Has no
+                    effect on chemical-equilibrium runs. Default False.
         verbose : bool
             If True, triggers prints throughout code
-        damping : bool
-            (Optional) Only used when diseq_chem=True. If True, under-relax the
-            temperature update in the coupled temperature<->photochem iteration
-            (blend the new iterate 50/50 with the previous one). This damps
-            period-2 limit cycles that can otherwise prevent convergence. Has no
-            effect on chemical-equilibrium runs. Default False.
         """
         #save to user 
         all_out = {}

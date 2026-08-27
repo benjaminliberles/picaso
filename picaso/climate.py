@@ -2545,6 +2545,10 @@ def find_strat(bundle, nofczns,nstr,
         Default = True, calculates kzz for each profile, does not use constant kzz
     diseq : bool
         Default = False, flags whether to do disequilibrium chemistry calculations or not
+    damping : bool
+        if True, under-relax the temperature update (blend the new iterate 50/50
+        with the previous one) to damp period-2 limit cycles that can stall the
+        coupled temperature<->photochem fixed-point iteration. Default False.
     all_kzz : array
         array of kzz values for each iteration, only used if save_kzz is True
     analytic_rfacv : bool
@@ -2937,6 +2941,10 @@ def profile(bundle, nofczns, nstr, temp, pressure,
         If True, uses the self-consistent kzz profile (not constant kzz). Default is True.
     diseq : bool, optional
         If True, runs disequilibrium chemistry workflow. Default is False.
+    damping : bool
+        if True, under-relax the temperature update (blend the new iterate 50/50
+        with the previous one) to damp period-2 limit cycles that can stall the
+        coupled temperature<->photochem fixed-point iteration. Default False.
     all_kzz : array, optional
         Array of all kzz profiles. Default is an empty array.
     analytic_rfacv : bool, optional
