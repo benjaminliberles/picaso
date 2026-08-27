@@ -133,7 +133,7 @@ def run_diseq_climate_workflow(bundle, nofczns, nstr, temp, pressure,
             CloudParameters,
             save_profile,all_profiles,all_opd,
             verbose=True, moist = None,
-            save_kzz=False, self_consistent_kzz=True,
+            save_kzz=False, self_consistent_kzz=True, damping=False,
             analytic_rfacv=False):
     """
     Run the disequilibrium climate workflow. This function is called by the main function
@@ -176,12 +176,19 @@ def run_diseq_climate_workflow(bundle, nofczns, nstr, temp, pressure,
         if True, save the kzz profile for every iteration
     self_consistent_kzz : bool
         if True, use the self-consistent kzz profile (not constant kzz)
+    damping : bool
+        if True, under-relax the temperature update (blend the new iterate 50/50
+        with the previous one) to damp period-2 limit cycles that can stall the
+        coupled temperature<->photochem fixed-point iteration. Default False.
     analytic_rfacv : bool
         if True, use the analytic rfacv prescription for tidally locked rocky exoplanets outlined in Koll (2022)
     """
-    ### 5) PROFILE to converge initial profile 
+    ### 5) PROFILE to converge initial profile
     # define the initial convergence criteria for profile 
-    convergence_criteria = convergence_criteriaT(it_max=10, itmx=7, conv=5.0, convt=4.0, x_max_mult=7.0) 
+    # Damped iterations may need additional outer iterations to converge;
+    # preserve the original cap for the default undamped behavior.
+    profile_itmx = 15 if damping else 7
+    convergence_criteria = convergence_criteriaT(it_max=10, itmx=profile_itmx, conv=5.0, convt=4.0, x_max_mult=7.0)
 
     final=False
     profile_flag, pressure, temperature, dtdp,CloudParameters,cld_out,flux_net_ir_layer,flux_net_v_layer,flux_plus_ir_attop,all_profiles,all_opd,all_kzz, rfacv, all_rfacv =profile(
@@ -195,7 +202,7 @@ def run_diseq_climate_workflow(bundle, nofczns, nstr, temp, pressure,
             convergence_criteria, final,
             flux_net_ir_layer=None, flux_plus_ir_attop=None,first_call_ever=False,
             verbose=verbose, moist = moist,
-            save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=True,
+            save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=True,damping=damping,
             analytic_rfacv=analytic_rfacv, all_rfacv=[])
     
     final_conv_flag, pressure, temp, dtdp, nstr_new,flux_net_ir_final,flux_net_v_final, flux_plus_final, chem_out, cld_out,all_profiles, all_opd ,all_kzz, rfacv, all_rfacv =find_strat(bundle,
@@ -209,7 +216,7 @@ def run_diseq_climate_workflow(bundle, nofczns, nstr, temp, pressure,
             save_profile, all_profiles, all_opd,
             flux_net_ir_layer, flux_plus_ir_attop,
             verbose=verbose,  moist = moist,
-            save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=True, all_kzz=all_kzz,
+            save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=True,damping=damping, all_kzz=all_kzz,
             analytic_rfacv=analytic_rfacv, all_rfacv=all_rfacv)
     
     #if CloudParameters.cloudy == 1:
@@ -2479,9 +2486,8 @@ def find_strat(bundle, nofczns,nstr,
         save_profile, all_profiles, all_opd,
         flux_net_ir_layer, flux_plus_ir_attop,
         verbose=1, moist = None,
-        save_kzz=False,self_consistent_kzz=True,diseq=False, all_kzz=[],
+        save_kzz=False,self_consistent_kzz=True,diseq=False,damping=False, all_kzz=[],
         analytic_rfacv=False, all_rfacv=[]):
-    
     """
     Parameters
     ----------
@@ -2564,7 +2570,9 @@ def find_strat(bundle, nofczns,nstr,
     #convt_strat = 3.0 # convt 
     x_max_mult = 7.0
     
-    convergence_criteria = convergence_criteriaT(it_max=8, itmx=5, conv=5.0, convt=3.0, x_max_mult=x_max_mult)
+    # Damping is opt-in, so retain the original iteration cap otherwise.
+    strat_itmx = 15 if damping else 5
+    convergence_criteria = convergence_criteriaT(it_max=8, itmx=strat_itmx, conv=5.0, convt=3.0, x_max_mult=x_max_mult)
 
     ip2 = -10 #?
     subad = 0.98 # degree to which layer can be subadiabatic and
@@ -2607,7 +2615,7 @@ def find_strat(bundle, nofczns,nstr,
             convergence_criteria, final,
             flux_net_ir_layer=flux_net_ir_layer, flux_plus_ir_attop=flux_plus_ir_attop,
             verbose=verbose,moist = moist,
-            save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=diseq, all_kzz=all_kzz,
+            save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=diseq,damping=damping, all_kzz=all_kzz,
             analytic_rfacv=analytic_rfacv, all_rfacv=all_rfacv)
 
     # if nofczns == 2: JM* #should be a flag here since this block in EGP is skipped if only 1 convective zone but convergence is better when enabled
@@ -2654,7 +2662,7 @@ def find_strat(bundle, nofczns,nstr,
             convergence_criteria, final,
             flux_net_ir_layer=flux_net_ir_layer, flux_plus_ir_attop=flux_plus_ir_attop,
             verbose=verbose,moist = moist,
-            save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=diseq, all_kzz=all_kzz,
+            save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=diseq,damping=damping, all_kzz=all_kzz,
             analytic_rfacv=analytic_rfacv, all_rfacv=all_rfacv)        
 
         i_change = 1
@@ -2697,7 +2705,7 @@ def find_strat(bundle, nofczns,nstr,
                                 convergence_criteria, final,
                                 flux_net_ir_layer=flux_net_ir_layer, flux_plus_ir_attop=flux_plus_ir_attop,
                                 verbose=verbose, moist = moist,
-                                save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=diseq, all_kzz=all_kzz,
+                                save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=diseq,damping=damping, all_kzz=all_kzz,
                                 analytic_rfacv=analytic_rfacv, all_rfacv=all_rfacv)
 
                 d1 = dtdp[nstr[1]-1]
@@ -2728,12 +2736,12 @@ def find_strat(bundle, nofczns,nstr,
                                 convergence_criteria, final,
                                 flux_net_ir_layer=flux_net_ir_layer, flux_plus_ir_attop=flux_plus_ir_attop,
                                 verbose=verbose, moist = moist,
-                                save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=diseq, all_kzz=all_kzz,
+                                save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=diseq,damping=damping, all_kzz=all_kzz,
                                 analytic_rfacv=analytic_rfacv, all_rfacv=all_rfacv)
 
             flag_final_convergence = 1
         
-    itmx_strat =6
+    itmx_strat = 15 if damping else 6
     it_max_strat = 10
     conv_strat = 2.0 
     convt_strat = 2.0
@@ -2754,7 +2762,7 @@ def find_strat(bundle, nofczns,nstr,
                 convergence_criteria, final,
                 flux_net_ir_layer=flux_net_ir_layer, flux_plus_ir_attop=flux_plus_ir_attop,
                 verbose=verbose,moist = moist,
-                save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=diseq, all_kzz=all_kzz,
+                save_kzz=save_kzz,self_consistent_kzz=self_consistent_kzz,diseq=diseq,damping=damping, all_kzz=all_kzz,
                 analytic_rfacv=analytic_rfacv, all_rfacv=all_rfacv)
                 #(mieff_dir, it_max_strat, itmx_strat, conv_strat, convt_strat, nofczns,nstr,x_max_mult,
                 #temp,pressure, F0PI, t_table, p_table, grad, cp,opacityclass, grav, 
@@ -2872,7 +2880,7 @@ def profile(bundle, nofczns, nstr, temp, pressure,
             convergence_criteria, final,
             flux_net_ir_layer=None, flux_plus_ir_attop=None,first_call_ever=False,
             verbose=True, moist = None,
-            save_kzz=False,self_consistent_kzz=True,diseq=False,all_kzz=[],
+            save_kzz=False,self_consistent_kzz=True,diseq=False,damping=False,all_kzz=[],
             analytic_rfacv=False,all_rfacv=[]):
     """
     Parameters
@@ -3102,7 +3110,15 @@ def profile(bundle, nofczns, nstr, temp, pressure,
                     F0PI,
                     save_profile, all_profiles, 
                     verbose=verbose, moist = moist, egp_stepmax = egp_stepmax)
-        
+
+        # Optional under-relaxation of the temperature update. The coupled
+        # temperature <-> photochem fixed-point iteration in a diseq climate
+        # solve can enter a period-2 limit cycle (T flips between two states
+        # every big iteration, Jacobian eigenvalue ~ -1); blending the new
+        # iterate with the previous one damps it (eigenvalue -1 -> 0 at 0.5).
+        if damping and iii > 0:
+            temp = 0.5*temp + 0.5*temp_old
+
         ### 1) ALWAYS UPDATE PT, CHEM, OPACITIES
         bundle.add_pt( temp, pressure)
         #simple chem no quenching 
