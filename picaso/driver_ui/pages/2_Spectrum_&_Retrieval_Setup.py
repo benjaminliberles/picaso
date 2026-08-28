@@ -432,10 +432,12 @@ def render_pressure_and_temperature(param_tools=None):
                 grid_parameters_unique = param_tools.interp_params[grid_name]['grid_parameters_unique']
                 grid_kwargs=config['temperature'][temp_profile].get('grid_kwargs',{})
                 with st.container(border=True):
+                    st.session_state['xarray_grid_ranges'] = {}
                     for param_name in grid_parameters_unique:
                         values = grid_parameters_unique[param_name]
                         minn = np.min(values)
                         maxx = np.max(values)
+                        st.session_state['xarray_grid_ranges'][param_name] = [minn, maxx]
                         if 'xarray_grid_params' in st.session_state:
                             value = float(st.session_state['xarray_grid_params'].get(param_name,None))
                         else: 
@@ -1021,6 +1023,12 @@ def render_ranges_for_selected_parameters(parameter_handler):
         mean_val = None
         std_val = None
 
+        #get ranges from grid kwargs as a first pass
+        if 'xarray' in key: 
+            grid_par_name = key.split('.')[-1]
+            min_val = st.session_state['xarray_grid_ranges'][grid_par_name][0]
+            max_val = st.session_state['xarray_grid_ranges'][grid_par_name][1]
+
         if p_dict and isinstance(p_dict, dict):
             p_type = p_dict.get('prior') or p_dict.get('type') or 'uniform'
             log_val = p_dict.get('log', False)
@@ -1037,6 +1045,7 @@ def render_ranges_for_selected_parameters(parameter_handler):
 
         if p_type not in ['uniform', 'gaussian']:
             p_type = 'uniform'
+
 
         prior_type_index = 0 if p_type == 'uniform' else 1
 
@@ -1295,7 +1304,7 @@ def render_retrievals(spectrum_figure=None):
         else: 
             default_paths=''
     
-    obs_data_input = st.text_area("Enter in the datapath(s) to your observation data (one per line)", 
+    obs_data_input = st.text_area("Enter in the datapath(s) to your observation data (one per line). Xarray or CSV format allowed. For CSV, only 1 row with comma-separated header is allowed to be read as pandas.read_csv(filename). For xarray, coord and data_vars must be set appropriately.", 
                                    value=default_paths)
     
     # Process the text area input into a list
