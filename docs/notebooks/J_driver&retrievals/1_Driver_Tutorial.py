@@ -65,7 +65,7 @@ if refdata_dir:
 
 # you can also load a slightly cleaned up version with a go function call 
 
-#config = go.load_template_config()
+config = go.load_template_config()
 
 # %% [markdown]
 # The master `driver.toml` in reference data has examples of every input option. Not every single block needs to be filled out. For example, let's inspect `config['temperature]`
