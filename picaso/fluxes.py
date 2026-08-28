@@ -3758,7 +3758,7 @@ def tidal_flux(Tint, nlevel, pressure, col_den, InjectionBundle):
     Parameters
 	----------
 	Tint : float 
-		Internal temperature [K]
+		Intrinsic temperature [K]
 	nlevel : int 
 		# of levels
 	pressure : array 

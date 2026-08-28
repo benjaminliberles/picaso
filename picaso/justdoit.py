@@ -5133,83 +5133,32 @@ class inputs():
         return picaso(self, opacityclass,dimension=dimension,calculation=calculation,
             full_output=full_output, plot_opacity=plot_opacity, as_dict=as_dict)
 
-    def effective_temp(self, Teq=None, Tint=None, Teff=None):
-        """Same as T_eff with different notation
-        Get Teff for climate run. Takes in Teff directly
-        or will calculate from Teq and Tint
+    def intrinsic_temp(self, Tint=None):
+        """Same as T_int with different notation
+        Get T_int for climate run.
 
         Parameters
         ----------
-        Teq : float 
-            (Optional) Equilibrium temperature [K]
         Tint : float 
-            (Optional) Internal temperature [K]
-        Teff : float 
-            (Optional) Effective temperature [K]
+            (Optional) Intrinsic temperature [K]
         """
 
-        # check if we need to calculate Teff
-        if Teff is None:
-            try:
-                Teff = (Teq**4 + Tint**4)**(1/4)
-            except:
-                if Teq is None and Tint is None:
-                    raise Exception('Teff, Teq, and Tint are not specified. ' \
-                    'Please supply Teff, or Teq and Tint. ' \
-                    'Both Teq and Tint are needed to calculate Teff.')
-                if Teq is None:
-                    raise Exception('Teq is not specified. Both Teq and Tint are needed to calculate Teff.')
-                if Tint is None:
-                    raise Exception('Tint is not specified. Both Teq and Tint are needed to calculate Teff.')
+        return self.T_int(Tint=Tint)
 
-        return self.T_eff(Teff=Teff, Teq=Teq, Tint=Tint)
-
-    def T_eff(self, Teq=None, Tint=None, Teff=None):
+    def T_int(self, Tint=None):
         """
-        Get Teff for climate run. Takes in Teff directly
-        or will calculate from Teq and Tint
+        Get T_int for climate run.
         
         Parameters
         ----------
-        Teq : float 
-            (Optional) Equilibrium temperature [K]
         Tint : float 
-            (Optional) Internal temperature [K]
-        Teff : float 
-            (Optional) Effective temperature [K]
+            (Optional) Intrinsic temperature [K]
         """
-
-        # effective temperature
-        if Teff is not None:
-            self.inputs['planet']['T_eff'] = Teff
-        else:
-            try:
-                Teff = (Teq**4 + Tint**4)**(1/4)
-            except:
-                if Teq is None and Tint is None:
-                    raise Exception('Teff, Teq, and Tint are not specified. ' \
-                    'Please supply Teff, or Teq and Tint. ' \
-                    'Both Teq and Tint are needed to calculate Teff.')
-                if Teq is None:
-                    raise Exception('Teq is not specified. Both Teq and Tint are needed to calculate Teff.')
-                if Tint is None:
-                    raise Exception('Tint is not specified. Both Teq and Tint are needed to calculate Teff.')
-            self.inputs['planet']['T_eff'] = 0
-
-        # equilibrium temperature
-        if Teq is not None:
-            self.inputs['planet']['T_eq'] = Teq
-        else:
-            print('WARNING: Equilibrium temperature is not specified, assuming Teq=0. ' \
-            'Please add Teq with justdoit.effective_temp() if a non-zero value is desired.')
-            self.inputs['planet']['T_eq'] = 0
 
         # internal temperature
         if Tint is not None:
             self.inputs['planet']['T_int'] = Tint
         else:
-            print('WARNING: Internal temperature is not specified, assuming Tint=0. ' \
-            'Please add Tint with justdoit.effective_temp() if a non-zero value is desired.')
             self.inputs['planet']['T_int'] = 0
     
     def interpret_run(self):
@@ -5258,8 +5207,10 @@ class inputs():
         moistgrad: bool
             Moist adiabatic gradient option
         """
-        if self.inputs['planet']['T_eff'] == 0.0:
-            raise Exception('Need to specify Teff with jdi.input for climate run')
+        try:
+            self.inputs['planet']['T_int']
+        except KeyError:
+            raise Exception('Need to specify intrinsic temperature Tint with jdi.input for climate run')
         if self.inputs['planet']['gravity'] == 0.0:
             raise Exception('Need to specify gravity with jdi.input for climate run')
         temp_guess = temp_guess.copy()
@@ -5361,11 +5312,11 @@ class inputs():
         self_consistent_kzz : bool
             If you want to run MLT in convective zones and Moses in the radiative zones
         damping : bool
-                    (Optional) Only used when diseq_chem=True. If True, under-relax the
-                    temperature update in the coupled temperature<->photochem iteration
-                    (blend the new iterate 50/50 with the previous one). This damps
-                    period-2 limit cycles that can otherwise prevent convergence. Has no
-                    effect on chemical-equilibrium runs. Default False.
+            (Optional) Only used when diseq_chem=True. If True, under-relax the
+            temperature update in the coupled temperature<->photochem iteration
+            (blend the new iterate 50/50 with the previous one). This damps
+            period-2 limit cycles that can otherwise prevent convergence. Has no
+            effect on chemical-equilibrium runs. Default False.
         verbose : bool
             If True, triggers prints throughout code
         """
@@ -5381,15 +5332,15 @@ class inputs():
 
         #we will extend the black body grid 30% beyond the min and max temp of the 
         #opacity grid just to be safe with the spline
-        Teff = self.inputs['planet']['T_eff']
+        Tint = self.inputs['planet']['T_int']
         extension = 0.3 
         #add threshold for tmin for convergence *JM
-        if Teff > 300:
+        if Tint > 300:
             tmin = min_temp*(1-extension)
         else:
             tmin = 10
 
-        if Teff > 1600:
+        if Tint > 1600:
             tmax = 10000
         else:
             tmax = max_temp*(1+extension)
@@ -5486,7 +5437,6 @@ class inputs():
         InjectionBundle = InjectionBundle(inject_energy, inject_beam, wave_in, pm, hratio, beam_profile)
 
 
-        Tint = self.inputs['planet']['T_int']
         grav = 0.01*self.inputs['planet']['gravity'] # cgs to si
         #logmh = self.inputs['atmosphere'].get('mh',None)
         #logmh = float(logmh) if logmh is not None else 0
