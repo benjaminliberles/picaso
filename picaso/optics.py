@@ -780,7 +780,6 @@ def compute_opacity_deprecate(atmosphere, opacityclass, ngauss=1, stream=2, delt
     TAU = np.zeros((nlayer+1, nwno,ngauss))
     for igauss in range(ngauss): TAU[1:,:,igauss]=numba_cumsum(DTAU[:,:,igauss])
 
-    # Clearsky case
     #removing this code as it is bug prone as it generally repeats all code 
     #by removing this I will only be modifying taucld 
     #if do_holes == True:
