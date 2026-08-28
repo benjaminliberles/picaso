@@ -368,4 +368,7 @@ for i in go.cloud_options:#running everything except userfile since the pressure
     config = go.load_template_config()
     config['clouds']['cloud1_type']=i
     print(i)
+    if i=='userfile':config['temperature']['profile']='userfile' #just to make sure that pressure grid matches
     test1 = go.run(driver_dict =config)
+
+# %%
