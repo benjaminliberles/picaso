@@ -1,5 +1,4 @@
 from .elements import ELEMENTS as ele 
-import json 
 import os
 import re
 import astropy.units as u
@@ -7,10 +6,12 @@ import astropy.constants as c
 import pandas as pd
 import warnings 
 import numpy as np
-from .wavelength import get_cld_input_grid
 from .wavelength import regrid as regrid_cld
-from numba import jit
-import math 
+
+#from .wavelength import get_cld_input_grid
+#from numba import jit
+#import math 
+#import json 
 
 __refdata__ = os.environ.get('picaso_refdata')
 EXCLUDE_OPACITY_TYPES = ('line', 'continuum', 'rayleigh')

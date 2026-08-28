@@ -45,3 +45,4 @@ Download = "https://github.com/natashabatalha/picaso"
 
 [project.scripts]
 picaso-notebooks = "picaso.integration_testing:main"
+picaso-app = "picaso.driver_ui:main"

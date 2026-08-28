@@ -24,6 +24,7 @@ import os
 import glob
 import pickle as pk
 import numpy as np
+_trapz = np.trapezoid if hasattr(np, 'trapezoid') else np.trapz
 import pandas as pd
 import copy
 import json
@@ -215,8 +216,10 @@ def picaso(bundle,opacityclass, dimension = '1d',calculation='reflected',
     #need to account for case where there is no star
     if 'nostar' in inputs['star']['database']:
         F0PI = np.zeros(opacityclass.nwno) + 1.0
+        stellar_flux = np.zeros(opacityclass.nwno) + 1.0
     else:
-        F0PI = opacityclass.relative_flux
+        F0PI = inputs['star']['relative_flux']#opacityclass.relative_flux
+        stellar_flux = inputs['star']['flux']#opacityclass.unshifted_stellar_spec
 
     b_top = 0.
     #semi major axis
@@ -589,8 +592,8 @@ def picaso(bundle,opacityclass, dimension = '1d',calculation='reflected',
 
 
         #see equation 18 Batalha+2019 PICASO 
-        returns['bond_albedo'] = (np.trapezoid(x=1/wno, y=albedo*opacityclass.unshifted_stellar_spec)/
-                                    np.trapezoid(x=1/wno, y=opacityclass.unshifted_stellar_spec))
+        returns['bond_albedo'] = (_trapz(x=1/wno, y=albedo*inputs['star']['flux'])/
+                                    _trapz(x=1/wno, y=stellar_flux))
 
         if ((not np.isnan(sa ) and (not np.isnan(atm.planet.radius))) ):
             returns['fpfs_reflected'] = albedo*(atm.planet.radius/sa)**2.0
@@ -607,7 +610,7 @@ def picaso(bundle,opacityclass, dimension = '1d',calculation='reflected',
         thermal = compress_thermal(nwno,flux_at_top, gweight, tweight)
         returns['thermal'] = thermal
         returns['thermal_unit'] = 'erg/s/(cm^2)/(cm)'#'erg/s/(cm^2)/(cm^(-1))'
-        returns['effective_temperature'] = (np.trapezoid(x=1/wno[::-1], y=thermal[::-1])/5.67e-5)**0.25
+        returns['effective_temperature'] = (_trapz(x=1/wno[::-1], y=thermal[::-1])/5.67e-5)**0.25
 
         if full_output: 
             atm.thermal_flux_planet = thermal
@@ -623,7 +626,7 @@ def picaso(bundle,opacityclass, dimension = '1d',calculation='reflected',
         if radius_star == 'nostar': 
             returns['fpfs_thermal'] = ['No star mode for Brown Dwarfs was used']
         elif ((not np.isnan(atm.planet.radius)) & (not np.isnan(radius_star))) :
-            fpfs_thermal = thermal/(opacityclass.unshifted_stellar_spec)*(atm.planet.radius/radius_star)**2.0
+            fpfs_thermal = thermal/(stellar_flux)*(atm.planet.radius/radius_star)**2.0
             returns['fpfs_thermal'] = fpfs_thermal
         else:
             returns['fpfs_thermal'] =[]
@@ -641,7 +644,7 @@ def picaso(bundle,opacityclass, dimension = '1d',calculation='reflected',
     if full_output: 
         if as_dict:
             returns['full_output'] = atm.as_dict()
-            if radius_star != 'nostar':returns['full_output']['star']['flux'] = opacityclass.unshifted_stellar_spec
+            if radius_star != 'nostar':returns['full_output']['star']['flux'] = stellar_flux
         else:
             returns['full_output'] = atm
 
@@ -1248,7 +1251,7 @@ def get_contribution(bundle, opacityclass, at_tau=1, dimension='1d'):
     if 'nostar' in inputs['star']['database']:
         F0PI = np.zeros(opacityclass.nwno) + 1.0
     else:
-        F0PI = opacityclass.relative_flux
+        F0PI = inputs['star']['relative_flux']#opacityclass.relative_flux
 
     b_top = 0.
     #semi major axis
@@ -1919,7 +1922,7 @@ class inputs():
             fine_flux_star = 10**interpolator(np.log10(wno_planet))
             
             # Compute binned flux using trapezoidal integration
-            fine_flux_star = np.array([np.trapezoid(fine_flux_star[(wno_planet >= wno_planet[i]) &
+            fine_flux_star = np.array([_trapz(fine_flux_star[(wno_planet >= wno_planet[i]) &
                                                         (wno_planet <= wno_planet[i+1])],
                                         x=-1/wno_planet[(wno_planet >= wno_planet[i]) &
                                                         (wno_planet <= wno_planet[i+1])])
@@ -2957,28 +2960,41 @@ class inputs():
         """
 
         # Initialize if needed
-        if 'climate' not in self.inputs:
-            self.inputs['climate'] = {}
+        # NEB edit -- if climate is not initialized then we do not need to save this initialization
+        if 'climate' not in self.inputs['calculation']:
+            climate_dict = {}
+            save_photoclass=False
+        else: 
+            climate_dict = self.inputs['climate']
+            save_photoclass=True
+
         initialize = False
-        if 'chemeq_solver' not in self.inputs['climate']:
+        if 'chemeq_solver' not in climate_dict:
             initialize = True
         else:
-            if method != self.inputs['climate']['chemeq_solver'].method:
+            if method != climate_dict['chemeq_solver'].method:
                 initialize = True
+        
         if initialize:
             from .photochem import EquilibriumChemistry
             if method == 'sonora-approx':
-                thermofile = os.path.join(__refdata__,'chemistry','thermo_data','thermo-sonora-component.yaml') 
-                self.inputs['climate']['chemeq_solver'] = EquilibriumChemistry(thermofile=thermofile, method=method)
+                thermofile = os.path.join(__refdata__,'chemistry','thermo_data','thermo-sonora-component.yaml')
+                solver = EquilibriumChemistry(thermofile=thermofile, method=method)
             elif method == None:
-                self.inputs['climate']['chemeq_solver'] = EquilibriumChemistry(**chemeq_solver_init_args)
+                solver = EquilibriumChemistry(**chemeq_solver_init_args)
             else:
                 raise Exception('`method` can be one of the following: "sonora-approx" or None')
-
-        # Unpack P, T and solver
+            if save_photoclass: 
+                climate_dict['chemeq_solver'] = solver
+        else: 
+            solver = climate_dict.get('chemeq_solver',None)
+            
+            if isinstance(solver,type(None)):
+                raise Exception('Oops: dev mistake -- NEB made the assumption that chemeq_on_the_fly initialization only happens for climate calculations but this assumptions is wrong and needs to be fixed. ')
+        
+        # Unpack P, T
         P = self.inputs['atmosphere']['profile']['pressure'].to_numpy()
         T = self.inputs['atmosphere']['profile']['temperature'].to_numpy()
-        solver = self.inputs['climate']['chemeq_solver']
 
         # Convert to a relative C/O
         cto_relative = cto_absolute/LODDERS2020_C_TO_O
@@ -5210,9 +5226,10 @@ class inputs():
             rfacv=0.0 
             F0PI = np.zeros(nwno) + 1.0
             opacityclass.relative_flux=F0PI
+            self.inputs['star']['relative_flux']=F0PI
         else:
             rfacv = self.inputs['climate']['rfacv']
-            F0PI = opacityclass.relative_flux 
+            F0PI = self.inputs['star']['relative_flux']#opacityclass.relative_flux 
 
         #turn off reflected light permanently for all these runs if rfacv=0 
         if rfacv==0:compute_reflected=False
